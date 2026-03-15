@@ -534,7 +534,7 @@ export default class ImageManagerPlugin extends Plugin {
     const allImages = this.getImageFiles(ALL_IMAGE_EXTENSIONS);
     const orphanImages = allImages.filter((f) => !linkedPaths.has(f.path));
 
-    new BrokenLinkRepairModal(this.app, links, allImages, orphanImages).open();
+    new BrokenLinkRepairModal(this.app, this.settings, links, allImages, orphanImages).open();
   }
 
   private findOrphanedImages(): void {

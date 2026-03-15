@@ -240,17 +240,22 @@ export class AltTextGenerator {
 
   /** 참조 마크다운 파일 중 하나라도 이미 non-layout alt text가 있으면 true */
   async hasExistingAltText(imageFile: TFile): Promise<boolean> {
+    return (await this.getExistingAltText(imageFile)) !== null;
+  }
+
+  /** 참조 마크다운 파일에서 첫 번째로 발견된 non-layout alt text 반환. 없으면 null. */
+  async getExistingAltText(imageFile: TFile): Promise<string | null> {
     const escapedPath = imageFile.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const escapedName = imageFile.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // |뒤에 값이 있고, 레이아웃 수정자(숫자, center 등)가 아닌 경우
     const pattern = new RegExp(
       `!\\[\\[(?:${escapedPath}|${escapedName})\\|(?!\\d+(?:x\\d+)?\\]|center\\]|left\\]|right\\])([^\\]]+)\\]\\]`
     );
     for (const mdFile of this.findReferencingMarkdownFiles(imageFile)) {
       const content = await this.app.vault.read(mdFile);
-      if (pattern.test(content)) return true;
+      const match = pattern.exec(content);
+      if (match) return match[1];
     }
-    return false;
+    return null;
   }
 
   /** 첫 번째 참조 마크다운 파일에서 이미지 위아래 N줄을 문자열로 반환. 0이면 undefined. */

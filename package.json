@@ -1,6 +1,6 @@
 {
   "name": "@lemon/image-manager",
-  "version": "1.12.2",
+  "version": "1.12.3",
   "description": "Image manager plugin for Obsidian",
   "license": "MIT",
   "main": "main.js",

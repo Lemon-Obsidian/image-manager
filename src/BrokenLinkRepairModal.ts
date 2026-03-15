@@ -1,5 +1,7 @@
 import { App, Modal, Notice, TFile } from 'obsidian';
 import { BrokenLink, BrokenLinkFinder } from './BrokenLinkFinder';
+import { AltTextGenerator } from './AltTextGenerator';
+import { ImageManagerSettings } from './types';
 
 type CandidateMode = 'orphan' | 'all';
 const COLS = 4;
@@ -19,6 +21,7 @@ export class BrokenLinkRepairModal extends Modal {
 
   constructor(
     app: App,
+    private settings: ImageManagerSettings,
     links: BrokenLink[],
     allImages: TFile[],
     orphanImages: TFile[]
@@ -383,20 +386,24 @@ export class BrokenLinkRepairModal extends Modal {
     let fixed = 0;
     let skipped = 0;
 
-    const byNote = new Map<string, { link: BrokenLink; replacement: TFile }[]>();
+    const generator = new AltTextGenerator(this.app, this.settings);
+
+    const byNote = new Map<string, { link: BrokenLink; replacement: TFile; altText: string | null }[]>();
     for (const link of this.links) {
       const replacement = this.repairs.get(this.key(link));
       if (!replacement) { skipped++; continue; }
+      // 교체 이미지의 기존 alt text 조회. 없으면 null (alt 없이 링크 생성)
+      const altText = await generator.getExistingAltText(replacement);
       const arr = byNote.get(link.mdFile.path) ?? [];
-      arr.push({ link, replacement });
+      arr.push({ link, replacement, altText });
       byNote.set(link.mdFile.path, arr);
     }
 
     for (const [, items] of byNote) {
       const mdFile = items[0].link.mdFile;
       let content = await this.app.vault.read(mdFile);
-      for (const { link, replacement } of items) {
-        const newLink = `![[${replacement.name}${link.alt ? `|${link.alt}` : ''}]]`;
+      for (const { link, replacement, altText } of items) {
+        const newLink = `![[${replacement.name}${altText ? `|${altText}` : ''}]]`;
         content = content.split(link.original).join(newLink);
         fixed++;
       }
