@@ -5,7 +5,7 @@ import {
   ImageManagerSettings,
   SUPPORTED_EXTENSIONS,
 } from './types';
-import { formatBytes, formatReduction } from './utils';
+import { formatReduction, ProgressNotice } from './utils';
 import { DuplicateDetector } from './DuplicateDetector';
 import { DuplicateModal } from './DuplicateModal';
 import { ConversionRecord, ReportModal } from './ReportModal';
@@ -159,13 +159,13 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const notice = new Notice(`이미지 변환 중... (0/${files.length})`, 0);
+    const progress = new ProgressNotice('이미지 변환 중');
     let totalOriginal = 0;
     let totalNew = 0;
     let successCount = 0;
 
     for (let i = 0; i < files.length; i++) {
-      notice.setMessage(`이미지 변환 중... (${i + 1}/${files.length})`);
+      progress.update(i + 1, files.length);
       const result = await this.processImage(files[i], false);
       if (result) {
         totalOriginal += result.originalSize;
@@ -174,12 +174,10 @@ export default class ImageManagerPlugin extends Plugin {
       }
     }
 
-    notice.hide();
-
     if (successCount === 0) {
-      new Notice('변환된 이미지가 없습니다.');
+      progress.finish('변환된 이미지가 없습니다.');
     } else {
-      new Notice(`✓ 변환 완료: ${successCount}개 파일\n${formatReduction(totalOriginal, totalNew)}`);
+      progress.finish(`✓ 변환 완료: ${successCount}개 파일\n${formatReduction(totalOriginal, totalNew)}`);
     }
   }
 
@@ -191,11 +189,11 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const notice = new Notice(`이미지 변환 중... (0/${files.length})`, 0);
+    const progress = new ProgressNotice('이미지 변환 중');
     const records: ConversionRecord[] = [];
 
     for (let i = 0; i < files.length; i++) {
-      notice.setMessage(`이미지 변환 중... (${i + 1}/${files.length})`);
+      progress.update(i + 1, files.length);
       const originalName = files[i].name;
       const originalSize = files[i].stat.size;
 
@@ -217,7 +215,7 @@ export default class ImageManagerPlugin extends Plugin {
       }
     }
 
-    notice.hide();
+    progress.finish('✓ 변환 완료 — 리포트를 확인하세요.');
     new ReportModal(this.app, records).open();
   }
 
@@ -229,29 +227,33 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const notice = new Notice(`해시 계산 중... (0/${files.length})`, 0);
+    const progress = new ProgressNotice('이미지 해시 계산 중');
     const detector = new DuplicateDetector(this.app);
 
-    const groups = await detector.detectDuplicates(
+    const { groups, elapsedMs } = await detector.detectDuplicates(
       files,
       this.settings.duplicateThreshold,
-      (current, total) => notice.setMessage(`해시 계산 중... (${current}/${total})`)
+      (current, total) => progress.update(current, total)
     );
 
-    notice.hide();
-    new DuplicateModal(this.app, groups).open();
+    const elapsed = (elapsedMs / 1000).toFixed(1);
+    progress.finish(
+      groups.length > 0
+        ? `✓ 중복 탐지 완료 — ${groups.length}개 그룹 발견 (${elapsed}s)`
+        : `✓ 중복 이미지 없음 (${elapsed}s)`
+    );
+    new DuplicateModal(this.app, groups, elapsedMs).open();
   }
 
   private async localizeImages(): Promise<void> {
-    const notice = new Notice('외부 이미지 로컬화 중...', 0);
+    const progress = new ProgressNotice('외부 이미지 로컬화 중');
     const localizer = new ImageLocalizer(this.app, this.settings);
 
     const { localized, failed } = await localizer.localizeAll((current, total) => {
-      notice.setMessage(`마크다운 파일 처리 중... (${current}/${total})`);
+      progress.update(current, total);
     });
 
-    notice.hide();
-    new Notice(
+    progress.finish(
       failed > 0
         ? `✓ 로컬화: ${localized}개 / ✗ 실패: ${failed}개`
         : `✓ ${localized}개 이미지를 로컬화했습니다.`
@@ -270,20 +272,18 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const notice = new Notice(`Alt text 생성 중: ${activeFile.name}`, 0);
+    const progress = new ProgressNotice(`Alt text 생성 중: ${activeFile.name}`);
     const generator = new AltTextGenerator(this.app, this.settings);
 
     try {
       const altText = await generator.generateForFile(activeFile);
-      notice.hide();
       if (altText) {
-        new Notice(`✓ Alt text 생성 완료: "${altText}"`);
+        progress.finish(`✓ Alt text 생성 완료: "${altText}"`);
       } else {
-        new Notice('Alt text 생성을 건너뛰었습니다.');
+        progress.finish('Alt text 생성을 건너뛰었습니다.');
       }
     } catch (e) {
-      notice.hide();
-      new Notice(`✗ Alt text 생성 실패: ${(e as Error).message}`);
+      progress.error(`Alt text 생성 실패: ${(e as Error).message}`);
     }
   }
 
@@ -299,15 +299,14 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const notice = new Notice(`Alt text 생성 중... (0/${files.length})`, 0);
+    const progress = new ProgressNotice('Alt text 생성 중');
     const generator = new AltTextGenerator(this.app, this.settings);
 
     const { success, failed, skipped } = await generator.generateForAll(files, (current, total) => {
-      notice.setMessage(`Alt text 생성 중... (${current}/${total})`);
+      progress.update(current, total);
     });
 
-    notice.hide();
-    new Notice(`✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
+    progress.finish(`✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
   }
 
   private async normalizeFileNames(): Promise<void> {
@@ -317,15 +316,14 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const notice = new Notice(`파일명 정규화 중... (0/${files.length})`, 0);
+    const progress = new ProgressNotice('파일명 정규화 중');
 
     const { renamed, skipped, failed } = await this.normalizer.normalizeAll(
       files,
-      (current, total) => notice.setMessage(`파일명 정규화 중... (${current}/${total})`)
+      (current, total) => progress.update(current, total)
     );
 
-    notice.hide();
-    new Notice(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
+    progress.finish(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
   }
 
   private getImageFiles(): TFile[] {

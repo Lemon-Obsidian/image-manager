@@ -1,6 +1,13 @@
-import { App, TFile } from 'obsidian';
+import { App, TFile, requestUrl } from 'obsidian';
 import { getImageDataFromFile, resizeImageData } from './ImageConverter';
 import { ImageManagerSettings } from './types';
+import { sleep } from './utils';
+
+// 요청 사이 기본 딜레이 (ms)
+const REQUEST_DELAY_MS = 1000;
+// 429 레이트 리밋 시 지수 백오프 기준 (ms) — attempt 1: 4s, 2: 8s, 3: 16s
+const BACKOFF_BASE_MS = 2000;
+const MAX_RETRIES = 3;
 
 export class AltTextGenerator {
   constructor(
@@ -12,7 +19,7 @@ export class AltTextGenerator {
     if (!this.settings.altTextEnabled || !this.settings.openaiApiKey) return null;
 
     const arrayBuffer = await this.app.vault.readBinary(file);
-    const altText = await this.callOpenAI(arrayBuffer, file.extension);
+    const altText = await this.callOpenAIWithRetry(arrayBuffer, file.extension);
 
     const mdFiles = this.findReferencingMarkdownFiles(file);
     for (const mdFile of mdFiles) {
@@ -34,6 +41,10 @@ export class AltTextGenerator {
 
     for (let i = 0; i < files.length; i++) {
       onProgress(i + 1, files.length);
+
+      // 첫 번째 요청 이후 딜레이 적용 (레이트 리밋 예방)
+      if (i > 0) await sleep(REQUEST_DELAY_MS);
+
       try {
         const result = await this.generateForFile(files[i]);
         if (result === null) {
@@ -50,6 +61,30 @@ export class AltTextGenerator {
     return results;
   }
 
+  private async callOpenAIWithRetry(arrayBuffer: ArrayBuffer, ext: string): Promise<string> {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const waitMs = BACKOFF_BASE_MS * Math.pow(2, attempt - 1);
+        console.log(`AltTextGenerator: 재시도 ${attempt}/${MAX_RETRIES} (${waitMs}ms 대기)`);
+        await sleep(waitMs);
+      }
+
+      try {
+        return await this.callOpenAI(arrayBuffer, ext);
+      } catch (e: any) {
+        lastError = e;
+        // 429 레이트 리밋이면 재시도, 그 외 에러는 즉시 throw
+        const status = e?.status ?? e?.response?.status;
+        if (status === 429) continue;
+        throw e;
+      }
+    }
+
+    throw lastError ?? new Error('최대 재시도 횟수 초과');
+  }
+
   private async callOpenAI(arrayBuffer: ArrayBuffer, ext: string): Promise<string> {
     const imageData = await getImageDataFromFile(arrayBuffer, ext);
     const resized = resizeImageData(imageData, this.settings.altTextMaxDimension);
@@ -61,7 +96,8 @@ export class AltTextGenerator {
     ctx.putImageData(resized, 0, 0);
     const dataURL = canvas.toDataURL('image/png');
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await requestUrl({
+      url: 'https://api.openai.com/v1/chat/completions',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -85,13 +121,7 @@ export class AltTextGenerator {
       }),
     });
 
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`OpenAI API 오류 ${response.status}: ${err}`);
-    }
-
-    const data = await response.json();
-    return (data.choices[0].message.content as string).trim();
+    return (response.json.choices[0].message.content as string).trim();
   }
 
   findReferencingMarkdownFiles(imageFile: TFile): TFile[] {

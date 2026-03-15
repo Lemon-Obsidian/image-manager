@@ -120,7 +120,7 @@ export class FileNameNormalizer {
       .trim()
       .toLowerCase()
       .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9\-가-힣]/g, '')
+      .replace(/[^a-z0-9\-가-힣\u4e00-\u9fff\u3040-\u30ff]/g, '')
       .replace(/-+/g, '-')
       .replace(/^-+|-+$/g, '');
   }

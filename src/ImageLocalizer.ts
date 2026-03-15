@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { App, TFile, requestUrl } from 'obsidian';
 import { convertImage } from './ImageConverter';
 import { ImageManagerSettings } from './types';
 
@@ -64,7 +64,7 @@ export class ImageLocalizer {
         updatedContent = this.replaceLink(updatedContent, link, savePath);
         count++;
       } catch (e) {
-        console.error(`ImageLocalizer: URL 다운로드 실패 (${link.url})`, e);
+        console.error(`ImageLocalizer: URL 처리 실패 (${link.url})`, e);
       }
     }
 
@@ -101,10 +101,10 @@ export class ImageLocalizer {
     return links;
   }
 
+  // requestUrl을 사용해 CORS 제한 없이 이미지 다운로드
   private async downloadImage(url: string): Promise<ArrayBuffer> {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.arrayBuffer();
+    const response = await requestUrl({ url });
+    return response.arrayBuffer;
   }
 
   private guessExtension(url: string): string {

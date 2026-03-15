@@ -5,7 +5,8 @@ import { formatBytes } from './utils';
 export class DuplicateModal extends Modal {
   constructor(
     app: App,
-    private groups: DuplicateGroup[]
+    private groups: DuplicateGroup[],
+    private elapsedMs: number
   ) {
     super(app);
   }
@@ -14,6 +15,12 @@ export class DuplicateModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl('h2', { text: '중복 이미지 탐지 결과' });
+
+    const elapsed = (this.elapsedMs / 1000).toFixed(1);
+    contentEl.createEl('p', {
+      text: `⏱ 탐지 소요 시간: ${elapsed}s`,
+      attr: { style: 'color: var(--text-muted); margin-bottom: 4px;' },
+    });
 
     if (this.groups.length === 0) {
       contentEl.createEl('p', { text: '중복 이미지가 없습니다.' });

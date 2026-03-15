@@ -44,7 +44,8 @@ export class DuplicateDetector {
     files: TFile[],
     threshold: number,
     onProgress: (current: number, total: number) => void
-  ): Promise<DuplicateGroup[]> {
+  ): Promise<{ groups: DuplicateGroup[]; elapsedMs: number }> {
+    const startTime = Date.now();
     const hashes: PHash[] = [];
 
     for (let i = 0; i < files.length; i++) {
@@ -61,19 +62,21 @@ export class DuplicateDetector {
       }
     }
 
-    const groups = new Map<number, number[]>();
+    const groupMap = new Map<number, number[]>();
     for (let i = 0; i < files.length; i++) {
       const root = uf.find(i);
-      if (!groups.has(root)) groups.set(root, []);
-      groups.get(root)!.push(i);
+      if (!groupMap.has(root)) groupMap.set(root, []);
+      groupMap.get(root)!.push(i);
     }
 
-    return Array.from(groups.values())
+    const groups = Array.from(groupMap.values())
       .filter((indices) => indices.length >= 2)
       .map((indices) => ({
         files: indices.map((i) => files[i]),
         hashes: indices.map((i) => hashes[i]),
       }));
+
+    return { groups, elapsedMs: Date.now() - startTime };
   }
 
   async computeHash(file: TFile): Promise<PHash> {
