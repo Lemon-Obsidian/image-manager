@@ -554,6 +554,8 @@ class ImageManagerSettingTab extends PluginSettingTab {
           })
       );
 
+    this.renderAltTextCostEstimate(containerEl);
+
     // ─── 이미지 파일명 정규화 ────────────────────────────────────────
     containerEl.createEl('h3', { text: '이미지 파일명 정규화' });
 
@@ -589,5 +591,58 @@ class ImageManagerSettingTab extends PluginSettingTab {
             this.display();
           })
       );
+  }
+
+  private renderAltTextCostEstimate(containerEl: HTMLElement): void {
+    const imageCount = this.plugin.app.vault
+      .getFiles()
+      .filter((f) => SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase())).length;
+
+    const is256 = this.plugin.settings.altTextMaxDimension === 256;
+    const tokensPerImage = is256 ? 85 : 170;
+    // gpt-4o-mini: $0.15/1M tokens, 환율 1,500원/$
+    const wonPerImage = (tokensPerImage * 0.15 * 1500) / 1_000_000;
+    const totalCost = imageCount * wonPerImage;
+
+    const box = containerEl.createDiv();
+    box.style.cssText = `
+      padding: 10px 14px;
+      margin: 8px 0 4px;
+      background: var(--background-secondary);
+      border-radius: 6px;
+      font-size: 0.9em;
+      line-height: 1.6;
+    `;
+
+    box.createEl('div', {
+      text: '💰 현재 볼트 기준 비용 예측',
+      attr: { style: 'font-weight: 600; margin-bottom: 6px;' },
+    });
+
+    const rows: [string, string][] = [
+      ['처리 대상 이미지', `${imageCount.toLocaleString()}개`],
+      ['이미지당 토큰', `약 ${tokensPerImage} 토큰`],
+      ['이미지당 비용', `약 ${wonPerImage.toFixed(4)}원`],
+      ['전체 예상 비용', `약 ${totalCost.toFixed(2)}원`],
+    ];
+
+    for (const [label, value] of rows) {
+      const row = box.createDiv({
+        attr: { style: 'display: flex; justify-content: space-between; padding: 2px 0;' },
+      });
+      row.createEl('span', {
+        text: label,
+        attr: { style: 'color: var(--text-muted);' },
+      });
+      row.createEl('span', {
+        text: value,
+        attr: { style: 'font-weight: 500;' },
+      });
+    }
+
+    box.createEl('div', {
+      text: `* gpt-4o-mini 기준, 환율 1,500원/$ · 이미지 크기 ${this.plugin.settings.altTextMaxDimension}px 설정`,
+      attr: { style: 'margin-top: 6px; color: var(--text-faint); font-size: 0.85em;' },
+    });
   }
 }
