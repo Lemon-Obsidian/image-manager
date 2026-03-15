@@ -146,7 +146,7 @@ export class AltTextGenerator {
             ],
           },
         ],
-        max_tokens: 100,
+        max_completion_tokens: 100,
       }),
     });
 
