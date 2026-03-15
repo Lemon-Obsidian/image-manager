@@ -30,13 +30,9 @@ export class BrokenLinkRepairModal extends Modal {
     this.links = links;
     this.allImages = allImages;
     this.orphanImages = orphanImages;
-    this.autoMatch();
-  }
-
-  private autoMatch(): void {
+    // 초기값 전부 null — 사용자가 명시적으로 클릭한 것만 복구됨
     for (const link of this.links) {
-      const candidates = BrokenLinkFinder.rankCandidates(link.ref, this.candidates);
-      this.repairs.set(this.key(link), candidates[0] ?? null);
+      this.repairs.set(this.key(link), null);
     }
   }
 
@@ -210,7 +206,6 @@ export class BrokenLinkRepairModal extends Modal {
       btn.addEventListener('click', () => {
         this.mode = value;
         this.candPage = 0;
-        this.autoMatch();
         this.render();
       });
     }
@@ -233,8 +228,9 @@ export class BrokenLinkRepairModal extends Modal {
       const grid = scrollArea.createDiv({
         attr: { style: `display:grid;grid-template-columns:repeat(${COLS},1fr);gap:8px;margin-bottom:8px;` },
       });
-      for (const cand of pageCands) {
-        this.renderCandCard(grid, cand, selected, key);
+      for (let i = 0; i < pageCands.length; i++) {
+        const isTopRanked = this.candPage === 0 && i === 0;
+        this.renderCandCard(grid, pageCands[i], selected, key, isTopRanked);
       }
 
       // 후보 페이지네이션
@@ -306,13 +302,14 @@ export class BrokenLinkRepairModal extends Modal {
     });
   }
 
-  private renderCandCard(container: HTMLElement, file: TFile, selected: TFile | null, key: string): void {
+  private renderCandCard(container: HTMLElement, file: TFile, selected: TFile | null, key: string, isTopRanked = false): void {
     const isSelected = selected?.path === file.path;
 
     const card = container.createDiv();
     card.style.cssText = `
       position:relative;border-radius:8px;overflow:hidden;cursor:pointer;
-      border:2px solid ${isSelected ? 'var(--color-accent)' : 'transparent'};
+      border:2px solid ${isSelected ? 'var(--color-accent)' : isTopRanked ? 'var(--color-accent)' : 'transparent'};
+      ${!isSelected && isTopRanked ? 'border-style:dashed;' : ''}
       background:var(--background-secondary);transition:border-color 0.15s;
     `;
 
@@ -351,11 +348,20 @@ export class BrokenLinkRepairModal extends Modal {
     imgWrap.addEventListener('mouseleave', () => { zoomBtn.style.opacity = '0'; });
     zoomBtn.addEventListener('click', (e) => { e.stopPropagation(); this.showZoom(file); });
 
-    // 파일명
-    card.createDiv({
-      text: file.name,
-      attr: { style: 'padding:5px 7px;font-size:0.78em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-muted);' },
+    // 파일명 + 추천 뱃지
+    const nameRow = card.createDiv({
+      attr: { style: 'display:flex;align-items:center;gap:4px;padding:5px 7px;' },
     });
+    nameRow.createDiv({
+      text: file.name,
+      attr: { style: 'font-size:0.78em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-muted);flex:1;min-width:0;' },
+    });
+    if (isTopRanked && !isSelected) {
+      nameRow.createEl('span', {
+        text: '추천',
+        attr: { style: 'flex-shrink:0;font-size:0.7em;padding:1px 5px;border-radius:3px;background:var(--color-accent);color:var(--text-on-accent);opacity:0.7;' },
+      });
+    }
 
     // 클릭 → 선택
     card.addEventListener('click', () => {
