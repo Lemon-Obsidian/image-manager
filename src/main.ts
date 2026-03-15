@@ -724,6 +724,20 @@ class ImageManagerSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName('최대 완료 토큰 수')
+      .setDesc('추론 모델(gpt-5-*)은 reasoning 토큰 포함. 부족하면 응답이 잘릴 수 있습니다.')
+      .addSlider((slider) =>
+        slider
+          .setLimits(500, 8000, 500)
+          .setValue(this.plugin.settings.altTextMaxCompletionTokens)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.altTextMaxCompletionTokens = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName('노트 문맥 줄 수')
       .setDesc('이미지 위아래 N줄을 함께 전송합니다. 0이면 비활성.')
       .addSlider((slider) =>

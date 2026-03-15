@@ -18,6 +18,7 @@ export interface ImageManagerSettings {
   altTextLanguage: string;
   altTextPrompt: string;
   altTextContextLines: number;  // 이미지 위아래 문맥 줄 수 (0: 비활성)
+  altTextMaxCompletionTokens: number;
   // Feature 6: 파일명 정규화
   renameEnabled: boolean;
   renameMode: 'reference' | 'alttext';
@@ -66,6 +67,7 @@ export const DEFAULT_SETTINGS: ImageManagerSettings = {
   altTextAutoRename: true,
   altTextPrompt: '이 이미지에 대한 간결한 alt text를 {language}로 작성해주세요. 이미지를 설명하는 짧은 문장 하나로만 답변하세요.',
   altTextContextLines: 0,
+  altTextMaxCompletionTokens: 1000,
   altTextHistory: [],
 };
 

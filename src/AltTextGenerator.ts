@@ -192,7 +192,7 @@ export class AltTextGenerator {
       body: JSON.stringify({
         model: this.settings.altTextModel,
         messages: [{ role: 'user', content: userContent }],
-        max_completion_tokens: 1000,
+        max_completion_tokens: this.settings.altTextMaxCompletionTokens,
       }),
     });
 
