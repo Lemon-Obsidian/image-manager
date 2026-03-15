@@ -5,6 +5,8 @@ node_modules/
 .pnpm-store/
 
 # Build output
+main.js
+*.js.map
 dist/
 build/
 out/
