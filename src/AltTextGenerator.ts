@@ -2,7 +2,7 @@ import { App, TFile, requestUrl } from 'obsidian';
 import { getImageDataFromFile, resizeImageData } from './ImageConverter';
 import { FileNameNormalizer } from './FileNameNormalizer';
 import { AltTextHistoryRecord, ImageManagerSettings } from './types';
-import { sleep } from './utils';
+import { CancellationToken, sleep } from './utils';
 
 // 요청 사이 기본 딜레이 (ms)
 const REQUEST_DELAY_MS = 1000;
@@ -86,11 +86,13 @@ export class AltTextGenerator {
 
   async generateForAll(
     files: TFile[],
-    onProgress: (current: number, total: number) => void
+    onProgress: (current: number, total: number) => void,
+    token?: CancellationToken
   ): Promise<{
     success: number;
     failed: number;
     skipped: number;
+    cancelled: boolean;
     totalPromptTokens: number;
     totalCompletionTokens: number;
     errors: string[];
@@ -99,12 +101,14 @@ export class AltTextGenerator {
       success: 0,
       failed: 0,
       skipped: 0,
+      cancelled: false,
       totalPromptTokens: 0,
       totalCompletionTokens: 0,
       errors: [] as string[],
     };
 
     for (let i = 0; i < files.length; i++) {
+      if (token?.cancelled) { results.cancelled = true; break; }
       onProgress(i + 1, files.length);
 
       // 첫 번째 요청 이후 딜레이 적용 (레이트 리밋 예방)

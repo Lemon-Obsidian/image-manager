@@ -23,6 +23,13 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export class CancellationToken {
+  cancelled = false;
+  cancel(): void {
+    this.cancelled = true;
+  }
+}
+
 /**
  * 모든 작업에 일관된 진행 알림 제공.
  * 경과 시간을 실시간으로 표시하고, 완료 시 소요 시간을 함께 노출한다.
@@ -31,9 +38,18 @@ export class ProgressNotice {
   private notice: Notice;
   private startTime: number;
 
-  constructor(private label: string) {
+  constructor(private label: string, token?: CancellationToken) {
     this.startTime = Date.now();
     this.notice = new Notice(`⏳ ${label}`, 0);
+    if (token) {
+      const btn = this.notice.noticeEl.createEl('button', { text: '취소' });
+      btn.style.cssText = 'display:block;margin-top:6px;padding:2px 12px;cursor:pointer;font-size:0.85em;';
+      btn.addEventListener('click', () => {
+        token.cancel();
+        btn.textContent = '취소 중…';
+        btn.disabled = true;
+      });
+    }
   }
 
   update(current: number, total: number): void {

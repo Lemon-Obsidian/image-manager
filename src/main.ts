@@ -6,7 +6,7 @@ import {
   ImageManagerSettings,
   SUPPORTED_EXTENSIONS,
 } from './types';
-import { formatReduction, ProgressNotice } from './utils';
+import { CancellationToken, formatReduction, ProgressNotice } from './utils';
 import {
   AVG_OUTPUT_TOKENS,
   EXCHANGE_RATE_KRW,
@@ -188,12 +188,14 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const progress = new ProgressNotice('이미지 변환 중');
+    const token = new CancellationToken();
+    const progress = new ProgressNotice('이미지 변환 중', token);
     let totalOriginal = 0;
     let totalNew = 0;
     let successCount = 0;
 
     for (let i = 0; i < files.length; i++) {
+      if (token.cancelled) break;
       progress.update(i + 1, files.length);
       const result = await this.processImage(files[i], false);
       if (result) {
@@ -203,7 +205,9 @@ export default class ImageManagerPlugin extends Plugin {
       }
     }
 
-    if (successCount === 0) {
+    if (token.cancelled) {
+      progress.finish(`↩ 취소됨 (${successCount}개 완료)`);
+    } else if (successCount === 0) {
       progress.finish('변환된 이미지가 없습니다.');
     } else {
       progress.finish(`✓ 변환 완료: ${successCount}개 파일\n${formatReduction(totalOriginal, totalNew)}`);
@@ -218,34 +222,26 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const progress = new ProgressNotice('이미지 변환 중');
+    const token = new CancellationToken();
+    const progress = new ProgressNotice('이미지 변환 중', token);
     const records: ConversionRecord[] = [];
 
     for (let i = 0; i < files.length; i++) {
+      if (token.cancelled) break;
       progress.update(i + 1, files.length);
       const originalName = files[i].name;
       const originalSize = files[i].stat.size;
 
       const result = await this.processImage(files[i], false);
       if (result) {
-        records.push({
-          originalName,
-          originalSize: result.originalSize,
-          newSize: result.newSize,
-          skipped: false,
-        });
+        records.push({ originalName, originalSize: result.originalSize, newSize: result.newSize, skipped: false });
       } else {
-        records.push({
-          originalName,
-          originalSize,
-          newSize: originalSize,
-          skipped: true,
-        });
+        records.push({ originalName, originalSize, newSize: originalSize, skipped: true });
       }
     }
 
-    progress.finish('✓ 변환 완료 — 리포트를 확인하세요.');
-    new ReportModal(this.app, records).open();
+    progress.finish(token.cancelled ? `↩ 취소됨 — 부분 리포트` : '✓ 변환 완료 — 리포트를 확인하세요.');
+    if (records.length > 0) new ReportModal(this.app, records).open();
   }
 
   private async detectDuplicates(): Promise<void> {
@@ -256,15 +252,21 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const progress = new ProgressNotice('이미지 해시 계산 중');
+    const token = new CancellationToken();
+    const progress = new ProgressNotice('이미지 해시 계산 중', token);
     const detector = new DuplicateDetector(this.app);
 
-    const { groups, elapsedMs } = await detector.detectDuplicates(
+    const { groups, elapsedMs, cancelled } = await detector.detectDuplicates(
       files,
       this.settings.duplicateThreshold,
-      (current, total) => progress.update(current, total)
+      (current, total) => progress.update(current, total),
+      token
     );
 
+    if (cancelled) {
+      progress.finish('↩ 취소됨');
+      return;
+    }
     const elapsed = (elapsedMs / 1000).toFixed(1);
     progress.finish(
       groups.length > 0
@@ -275,17 +277,21 @@ export default class ImageManagerPlugin extends Plugin {
   }
 
   private async localizeImages(): Promise<void> {
-    const progress = new ProgressNotice('외부 이미지 로컬화 중');
+    const token = new CancellationToken();
+    const progress = new ProgressNotice('외부 이미지 로컬화 중', token);
     const localizer = new ImageLocalizer(this.app, this.settings);
 
-    const { localized, failed, errors } = await localizer.localizeAll((current, total) => {
-      progress.update(current, total);
-    });
+    const { localized, failed, cancelled, errors } = await localizer.localizeAll(
+      (current, total) => progress.update(current, total),
+      token
+    );
 
     progress.finish(
-      failed > 0
-        ? `✓ 로컬화: ${localized}개 / ✗ 실패: ${failed}개`
-        : `✓ ${localized}개 이미지를 로컬화했습니다.`
+      cancelled
+        ? `↩ 취소됨 (${localized}개 완료)`
+        : failed > 0
+          ? `✓ 로컬화: ${localized}개 / ✗ 실패: ${failed}개`
+          : `✓ ${localized}개 이미지를 로컬화했습니다.`
     );
     this.showErrors(errors);
   }
@@ -331,18 +337,19 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const progress = new ProgressNotice('Alt text 생성 중');
+    const token = new CancellationToken();
+    const progress = new ProgressNotice('Alt text 생성 중', token);
     const generator = new AltTextGenerator(this.app, this.settings);
 
-    const { success, failed, skipped, totalPromptTokens, totalCompletionTokens, errors } =
-      await generator.generateForAll(files, (current, total) => {
-        progress.update(current, total);
-      });
+    const { success, failed, skipped, cancelled, totalPromptTokens, totalCompletionTokens, errors } =
+      await generator.generateForAll(files, (current, total) => progress.update(current, total), token);
 
     this.accumulateUsage(totalPromptTokens, totalCompletionTokens);
     await this.saveSettings();
 
-    progress.finish(`✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
+    progress.finish(cancelled
+      ? `↩ 취소됨 (${success}개 완료)`
+      : `✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
     this.showErrors(errors);
   }
 
@@ -353,14 +360,18 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const progress = new ProgressNotice('파일명 정규화 중');
+    const token = new CancellationToken();
+    const progress = new ProgressNotice('파일명 정규화 중', token);
 
-    const { renamed, skipped, failed, errors } = await this.normalizer.normalizeAll(
+    const { renamed, skipped, failed, cancelled, errors } = await this.normalizer.normalizeAll(
       files,
-      (current, total) => progress.update(current, total)
+      (current, total) => progress.update(current, total),
+      token
     );
 
-    progress.finish(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
+    progress.finish(cancelled
+      ? `↩ 취소됨 (${renamed}개 완료)`
+      : `✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
     this.showErrors(errors);
   }
 
@@ -379,16 +390,19 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const progress = new ProgressNotice(`Alt text 생성 중 (현재 노트)`);
+    const token = new CancellationToken();
+    const progress = new ProgressNotice('Alt text 생성 중 (현재 노트)', token);
     const generator = new AltTextGenerator(this.app, this.settings);
 
-    const { success, failed, skipped, totalPromptTokens, totalCompletionTokens, errors } =
-      await generator.generateForAll(files, (current, total) => progress.update(current, total));
+    const { success, failed, skipped, cancelled, totalPromptTokens, totalCompletionTokens, errors } =
+      await generator.generateForAll(files, (current, total) => progress.update(current, total), token);
 
     this.accumulateUsage(totalPromptTokens, totalCompletionTokens);
     await this.saveSettings();
 
-    progress.finish(`✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
+    progress.finish(cancelled
+      ? `↩ 취소됨 (${success}개 완료)`
+      : `✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
     this.showErrors(errors);
   }
 
@@ -403,14 +417,18 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const progress = new ProgressNotice('파일명 정규화 중 (현재 노트)');
+    const token = new CancellationToken();
+    const progress = new ProgressNotice('파일명 정규화 중 (현재 노트)', token);
 
-    const { renamed, skipped, failed, errors } = await this.normalizer.normalizeAll(
+    const { renamed, skipped, failed, cancelled, errors } = await this.normalizer.normalizeAll(
       files,
-      (current, total) => progress.update(current, total)
+      (current, total) => progress.update(current, total),
+      token
     );
 
-    progress.finish(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
+    progress.finish(cancelled
+      ? `↩ 취소됨 (${renamed}개 완료)`
+      : `✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
     this.showErrors(errors);
   }
 

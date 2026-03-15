@@ -1,6 +1,6 @@
 import { App, TFile } from 'obsidian';
 import { ImageManagerSettings } from './types';
-import { isLayoutModifier } from './utils';
+import { CancellationToken, isLayoutModifier } from './utils';
 
 export class FileNameNormalizer {
   constructor(
@@ -10,11 +10,13 @@ export class FileNameNormalizer {
 
   async normalizeAll(
     files: TFile[],
-    onProgress: (current: number, total: number) => void
-  ): Promise<{ renamed: number; skipped: number; failed: number; errors: string[] }> {
-    const results = { renamed: 0, skipped: 0, failed: 0, errors: [] as string[] };
+    onProgress: (current: number, total: number) => void,
+    token?: CancellationToken
+  ): Promise<{ renamed: number; skipped: number; failed: number; cancelled: boolean; errors: string[] }> {
+    const results = { renamed: 0, skipped: 0, failed: 0, cancelled: false, errors: [] as string[] };
 
     for (let i = 0; i < files.length; i++) {
+      if (token?.cancelled) { results.cancelled = true; break; }
       onProgress(i + 1, files.length);
       try {
         const renamed = await this.normalizeFile(files[i]);

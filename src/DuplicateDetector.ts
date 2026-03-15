@@ -1,5 +1,6 @@
 import { App, TFile } from 'obsidian';
 import { getImageDataFromFile } from './ImageConverter';
+import { CancellationToken } from './utils';
 
 // 64비트 해시를 두 개의 32비트 숫자로 표현 (BigInt ES2018 미지원 우회)
 export interface PHash {
@@ -43,12 +44,16 @@ export class DuplicateDetector {
   async detectDuplicates(
     files: TFile[],
     threshold: number,
-    onProgress: (current: number, total: number) => void
-  ): Promise<{ groups: DuplicateGroup[]; elapsedMs: number }> {
+    onProgress: (current: number, total: number) => void,
+    token?: CancellationToken
+  ): Promise<{ groups: DuplicateGroup[]; elapsedMs: number; cancelled: boolean }> {
     const startTime = Date.now();
     const hashes: PHash[] = [];
 
     for (let i = 0; i < files.length; i++) {
+      if (token?.cancelled) {
+        return { groups: [], elapsedMs: Date.now() - startTime, cancelled: true };
+      }
       onProgress(i + 1, files.length);
       hashes.push(await this.computeHash(files[i]));
     }
@@ -76,7 +81,7 @@ export class DuplicateDetector {
         hashes: indices.map((i) => hashes[i]),
       }));
 
-    return { groups, elapsedMs: Date.now() - startTime };
+    return { groups, elapsedMs: Date.now() - startTime, cancelled: false };
   }
 
   async computeHash(file: TFile): Promise<PHash> {

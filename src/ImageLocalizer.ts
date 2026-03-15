@@ -1,6 +1,7 @@
 import { App, TFile, requestUrl } from 'obsidian';
 import { convertImage } from './ImageConverter';
 import { ImageManagerSettings } from './types';
+import { CancellationToken } from './utils';
 
 interface ExternalLink {
   original: string;
@@ -16,15 +17,18 @@ export class ImageLocalizer {
   ) {}
 
   async localizeAll(
-    onProgress: (current: number, total: number) => void
-  ): Promise<{ localized: number; failed: number; errors: string[] }> {
+    onProgress: (current: number, total: number) => void,
+    token?: CancellationToken
+  ): Promise<{ localized: number; failed: number; cancelled: boolean; errors: string[] }> {
     const mdFiles = this.app.vault.getFiles().filter((f) => f.extension === 'md');
 
     let localized = 0;
     let failed = 0;
+    let cancelled = false;
     const errors: string[] = [];
 
     for (let i = 0; i < mdFiles.length; i++) {
+      if (token?.cancelled) { cancelled = true; break; }
       onProgress(i + 1, mdFiles.length);
       try {
         const count = await this.processMarkdownFile(mdFiles[i]);
@@ -37,7 +41,7 @@ export class ImageLocalizer {
       }
     }
 
-    return { localized, failed, errors };
+    return { localized, failed, cancelled, errors };
   }
 
   private async processMarkdownFile(mdFile: TFile): Promise<number> {
