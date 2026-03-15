@@ -341,11 +341,13 @@ export default class ImageManagerPlugin extends Plugin {
     const progress = new ProgressNotice('Alt text 생성 중', token);
     const generator = new AltTextGenerator(this.app, this.settings);
 
-    const { success, failed, skipped, cancelled, totalPromptTokens, totalCompletionTokens, errors } =
-      await generator.generateForAll(files, (current, total) => progress.update(current, total), token);
-
-    this.accumulateUsage(totalPromptTokens, totalCompletionTokens);
-    await this.saveSettings();
+    const { success, failed, skipped, cancelled, errors } =
+      await generator.generateForAll(
+        files,
+        (current, total) => progress.update(current, total),
+        token,
+        async (pt, ct) => { this.accumulateUsage(pt, ct); await this.saveSettings(); }
+      );
 
     progress.finish(cancelled
       ? `↩ 취소됨 (${success}개 완료)`
@@ -394,11 +396,13 @@ export default class ImageManagerPlugin extends Plugin {
     const progress = new ProgressNotice('Alt text 생성 중 (현재 노트)', token);
     const generator = new AltTextGenerator(this.app, this.settings);
 
-    const { success, failed, skipped, cancelled, totalPromptTokens, totalCompletionTokens, errors } =
-      await generator.generateForAll(files, (current, total) => progress.update(current, total), token);
-
-    this.accumulateUsage(totalPromptTokens, totalCompletionTokens);
-    await this.saveSettings();
+    const { success, failed, skipped, cancelled, errors } =
+      await generator.generateForAll(
+        files,
+        (current, total) => progress.update(current, total),
+        token,
+        async (pt, ct) => { this.accumulateUsage(pt, ct); await this.saveSettings(); }
+      );
 
     progress.finish(cancelled
       ? `↩ 취소됨 (${success}개 완료)`
@@ -697,6 +701,18 @@ class ImageManagerSettingTab extends PluginSettingTab {
           .setValue(String(this.plugin.settings.altTextMaxDimension))
           .onChange(async (value) => {
             this.plugin.settings.altTextMaxDimension = Number(value) as 256 | 512;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('기존 alt text 덮어쓰기')
+      .setDesc('꺼두면 이미 alt text가 있는 이미지는 건너뜁니다. (기본값: 꺼짐)')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.altTextOverwrite)
+          .onChange(async (value) => {
+            this.plugin.settings.altTextOverwrite = value;
             await this.plugin.saveSettings();
           })
       );

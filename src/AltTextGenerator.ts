@@ -25,6 +25,9 @@ export class AltTextGenerator {
   async generateForFile(file: TFile): Promise<AltTextResult | null> {
     if (!this.settings.altTextEnabled || !this.settings.openaiApiKey) return null;
 
+    // 이미 alt text가 있으면 스킵 (재생성 허용 설정이 꺼진 경우)
+    if (!this.settings.altTextOverwrite && await this.hasExistingAltText(file)) return null;
+
     const arrayBuffer = await this.app.vault.readBinary(file);
     const context = await this.extractContext(file);
     const result = await this.callOpenAIWithRetry(arrayBuffer, file.extension, context);
@@ -88,7 +91,8 @@ export class AltTextGenerator {
   async generateForAll(
     files: TFile[],
     onProgress: (current: number, total: number) => void,
-    token?: CancellationToken
+    token?: CancellationToken,
+    onFileSuccess?: (promptTokens: number, completionTokens: number) => Promise<void>
   ): Promise<{
     success: number;
     failed: number;
@@ -123,6 +127,7 @@ export class AltTextGenerator {
           results.success++;
           results.totalPromptTokens += result.promptTokens;
           results.totalCompletionTokens += result.completionTokens;
+          await onFileSuccess?.(result.promptTokens, result.completionTokens);
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -231,6 +236,21 @@ export class AltTextGenerator {
       }
     }
     return result;
+  }
+
+  /** 참조 마크다운 파일 중 하나라도 이미 non-layout alt text가 있으면 true */
+  private async hasExistingAltText(imageFile: TFile): Promise<boolean> {
+    const escapedPath = imageFile.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedName = imageFile.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // |뒤에 값이 있고, 레이아웃 수정자(숫자, center 등)가 아닌 경우
+    const pattern = new RegExp(
+      `!\\[\\[(?:${escapedPath}|${escapedName})\\|(?!\\d+(?:x\\d+)?\\]|center\\]|left\\]|right\\])([^\\]]+)\\]\\]`
+    );
+    for (const mdFile of this.findReferencingMarkdownFiles(imageFile)) {
+      const content = await this.app.vault.read(mdFile);
+      if (pattern.test(content)) return true;
+    }
+    return false;
   }
 
   /** 첫 번째 참조 마크다운 파일에서 이미지 위아래 N줄을 문자열로 반환. 0이면 undefined. */
