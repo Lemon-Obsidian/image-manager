@@ -39,7 +39,7 @@ export const DEFAULT_SETTINGS: ImageManagerSettings = {
   altTextEnabled: false,
   openaiApiKey: '',
   altTextModel: 'gpt-5-nano',
-  altTextMaxDimension: 256,
+  altTextMaxDimension: 512,
   altTextLanguage: '한국어',
   renameEnabled: false,
   renameMode: 'reference',
