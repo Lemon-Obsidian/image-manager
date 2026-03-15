@@ -36,6 +36,7 @@ export interface ImageManagerSettings {
 
 export interface AltTextHistoryRecord {
   fileName: string;
+  filePath: string;     // rename 후 최종 경로 (이미지 렌더링용)
   altText: string;
   model: string;
   timestamp: string;    // ISO 날짜 문자열

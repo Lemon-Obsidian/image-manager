@@ -70,6 +70,7 @@ export class AltTextGenerator {
     }
     const record: AltTextHistoryRecord = {
       fileName: originalName,
+      filePath: file.path,  // rename 후 갱신된 경로
       altText,
       model: this.settings.altTextModel,
       timestamp: new Date().toISOString(),
