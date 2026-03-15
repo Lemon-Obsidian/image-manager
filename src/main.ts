@@ -80,6 +80,12 @@ export default class ImageManagerPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: 'generate-alt-text-current-note',
+      name: '현재 노트 이미지 alt text 생성',
+      callback: () => this.generateAltTextForCurrentNote(),
+    });
+
+    this.addCommand({
       id: 'generate-alt-text-all',
       name: '볼트 전체 alt text 생성',
       callback: () => this.generateAltTextForAll(),
@@ -89,6 +95,12 @@ export default class ImageManagerPlugin extends Plugin {
       id: 'normalize-filenames',
       name: '이미지 파일명 정규화',
       callback: () => this.normalizeFileNames(),
+    });
+
+    this.addCommand({
+      id: 'normalize-filenames-current-note',
+      name: '현재 노트 이미지 파일명 정규화',
+      callback: () => this.normalizeFileNamesForCurrentNote(),
     });
 
     this.addSettingTab(new ImageManagerSettingTab(this.app, this));
@@ -341,12 +353,76 @@ export default class ImageManagerPlugin extends Plugin {
     progress.finish(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
   }
 
+  private async generateAltTextForCurrentNote(): Promise<void> {
+    const files = this.getImagesInCurrentNote();
+    if (files === null) {
+      new Notice('마크다운 노트를 열어주세요.');
+      return;
+    }
+    if (files.length === 0) {
+      new Notice('현재 노트에 처리할 이미지가 없습니다.');
+      return;
+    }
+    if (!this.settings.altTextEnabled || !this.settings.openaiApiKey) {
+      new Notice('Alt Text 생성을 활성화하고 API 키를 입력해주세요.');
+      return;
+    }
+
+    const progress = new ProgressNotice(`Alt text 생성 중 (현재 노트)`);
+    const generator = new AltTextGenerator(this.app, this.settings);
+
+    const { success, failed, skipped, totalPromptTokens, totalCompletionTokens } =
+      await generator.generateForAll(files, (current, total) => progress.update(current, total));
+
+    this.accumulateUsage(totalPromptTokens, totalCompletionTokens);
+    await this.saveSettings();
+
+    progress.finish(`✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
+  }
+
+  private async normalizeFileNamesForCurrentNote(): Promise<void> {
+    const files = this.getImagesInCurrentNote();
+    if (files === null) {
+      new Notice('마크다운 노트를 열어주세요.');
+      return;
+    }
+    if (files.length === 0) {
+      new Notice('현재 노트에 처리할 이미지가 없습니다.');
+      return;
+    }
+
+    const progress = new ProgressNotice('파일명 정규화 중 (현재 노트)');
+
+    const { renamed, skipped, failed } = await this.normalizer.normalizeAll(
+      files,
+      (current, total) => progress.update(current, total)
+    );
+
+    progress.finish(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
+  }
+
   private getImageFiles(): TFile[] {
     return this.app.vault
       .getFiles()
       .filter(
         (f) =>
           SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase()) && !this.isExcluded(f.path)
+      );
+  }
+
+  /** 현재 열린 마크다운 노트에서 참조된 이미지 파일 목록 */
+  private getImagesInCurrentNote(): TFile[] | null {
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile || activeFile.extension !== 'md') return null;
+
+    const links = this.app.metadataCache.resolvedLinks[activeFile.path] ?? {};
+    return Object.keys(links)
+      .map((path) => this.app.vault.getAbstractFileByPath(path))
+      .filter(
+        (f): f is TFile =>
+          f instanceof TFile &&
+          SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase()) &&
+          !this.isExcluded(f.path)
       );
   }
 
