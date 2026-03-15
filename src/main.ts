@@ -24,6 +24,8 @@ import { AltTextGenerator } from './AltTextGenerator';
 import { AltTextHistoryModal } from './AltTextHistoryModal';
 import { FileNameNormalizer } from './FileNameNormalizer';
 import { OrphanedImageModal } from './OrphanedImageModal';
+import { BrokenLinkFinder } from './BrokenLinkFinder';
+import { BrokenLinkRepairModal } from './BrokenLinkRepairModal';
 
 interface ConversionResult {
   originalSize: number;
@@ -116,6 +118,12 @@ export default class ImageManagerPlugin extends Plugin {
       id: 'find-orphaned-images',
       name: '고아 이미지 탐지 및 삭제',
       callback: () => this.findOrphanedImages(),
+    });
+
+    this.addCommand({
+      id: 'repair-broken-image-links',
+      name: '깨진 이미지 링크 복구',
+      callback: () => this.repairBrokenImageLinks(),
     });
 
     this.addSettingTab(new ImageManagerSettingTab(this.app, this));
@@ -487,6 +495,22 @@ export default class ImageManagerPlugin extends Plugin {
       this.settings.altTextModel
     );
     this.settings.altTextStatsUpdatedAt = new Date().toISOString();
+  }
+
+  private async repairBrokenImageLinks(): Promise<void> {
+    const progress = new ProgressNotice('깨진 링크 탐색 중');
+    const finder = new BrokenLinkFinder(this.app);
+    const links = await finder.findAll();
+    progress.finish(`✓ 탐색 완료 — ${links.length}개 깨진 링크`);
+
+    const linkedPaths = new Set<string>();
+    for (const l of Object.values(this.app.metadataCache.resolvedLinks)) {
+      for (const p of Object.keys(l)) linkedPaths.add(p);
+    }
+    const allImages = this.getImageFiles(ALL_IMAGE_EXTENSIONS);
+    const orphanImages = allImages.filter((f) => !linkedPaths.has(f.path));
+
+    new BrokenLinkRepairModal(this.app, links, allImages, orphanImages).open();
   }
 
   private findOrphanedImages(): void {
