@@ -9,17 +9,24 @@ const REQUEST_DELAY_MS = 1000;
 const BACKOFF_BASE_MS = 2000;
 const MAX_RETRIES = 3;
 
+export interface AltTextResult {
+  text: string;
+  promptTokens: number;
+  completionTokens: number;
+}
+
 export class AltTextGenerator {
   constructor(
     private app: App,
     private settings: ImageManagerSettings
   ) {}
 
-  async generateForFile(file: TFile): Promise<string | null> {
+  async generateForFile(file: TFile): Promise<AltTextResult | null> {
     if (!this.settings.altTextEnabled || !this.settings.openaiApiKey) return null;
 
     const arrayBuffer = await this.app.vault.readBinary(file);
-    const altText = await this.callOpenAIWithRetry(arrayBuffer, file.extension);
+    const result = await this.callOpenAIWithRetry(arrayBuffer, file.extension);
+    const { text: altText } = result;
 
     const mdFiles = this.findReferencingMarkdownFiles(file);
     for (const mdFile of mdFiles) {
@@ -30,14 +37,26 @@ export class AltTextGenerator {
       }
     }
 
-    return altText;
+    return result;
   }
 
   async generateForAll(
     files: TFile[],
     onProgress: (current: number, total: number) => void
-  ): Promise<{ success: number; failed: number; skipped: number }> {
-    const results = { success: 0, failed: 0, skipped: 0 };
+  ): Promise<{
+    success: number;
+    failed: number;
+    skipped: number;
+    totalPromptTokens: number;
+    totalCompletionTokens: number;
+  }> {
+    const results = {
+      success: 0,
+      failed: 0,
+      skipped: 0,
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+    };
 
     for (let i = 0; i < files.length; i++) {
       onProgress(i + 1, files.length);
@@ -51,6 +70,8 @@ export class AltTextGenerator {
           results.skipped++;
         } else {
           results.success++;
+          results.totalPromptTokens += result.promptTokens;
+          results.totalCompletionTokens += result.completionTokens;
         }
       } catch (e) {
         console.error(`AltTextGenerator: 실패 (${files[i].name})`, e);
@@ -61,7 +82,10 @@ export class AltTextGenerator {
     return results;
   }
 
-  private async callOpenAIWithRetry(arrayBuffer: ArrayBuffer, ext: string): Promise<string> {
+  private async callOpenAIWithRetry(
+    arrayBuffer: ArrayBuffer,
+    ext: string
+  ): Promise<AltTextResult> {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -85,7 +109,7 @@ export class AltTextGenerator {
     throw lastError ?? new Error('최대 재시도 횟수 초과');
   }
 
-  private async callOpenAI(arrayBuffer: ArrayBuffer, ext: string): Promise<string> {
+  private async callOpenAI(arrayBuffer: ArrayBuffer, ext: string): Promise<AltTextResult> {
     const imageData = await getImageDataFromFile(arrayBuffer, ext);
     const resized = resizeImageData(imageData, this.settings.altTextMaxDimension);
 
@@ -121,7 +145,12 @@ export class AltTextGenerator {
       }),
     });
 
-    return (response.json.choices[0].message.content as string).trim();
+    const json = response.json;
+    return {
+      text: (json.choices[0].message.content as string).trim(),
+      promptTokens: json.usage?.prompt_tokens ?? 0,
+      completionTokens: json.usage?.completion_tokens ?? 0,
+    };
   }
 
   findReferencingMarkdownFiles(imageFile: TFile): TFile[] {

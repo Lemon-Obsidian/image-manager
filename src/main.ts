@@ -276,9 +276,11 @@ export default class ImageManagerPlugin extends Plugin {
     const generator = new AltTextGenerator(this.app, this.settings);
 
     try {
-      const altText = await generator.generateForFile(activeFile);
-      if (altText) {
-        progress.finish(`✓ Alt text 생성 완료: "${altText}"`);
+      const result = await generator.generateForFile(activeFile);
+      if (result) {
+        this.accumulateUsage(result.promptTokens, result.completionTokens);
+        await this.saveSettings();
+        progress.finish(`✓ Alt text 생성 완료: "${result.text}"`);
       } else {
         progress.finish('Alt text 생성을 건너뛰었습니다.');
       }
@@ -302,9 +304,13 @@ export default class ImageManagerPlugin extends Plugin {
     const progress = new ProgressNotice('Alt text 생성 중');
     const generator = new AltTextGenerator(this.app, this.settings);
 
-    const { success, failed, skipped } = await generator.generateForAll(files, (current, total) => {
-      progress.update(current, total);
-    });
+    const { success, failed, skipped, totalPromptTokens, totalCompletionTokens } =
+      await generator.generateForAll(files, (current, total) => {
+        progress.update(current, total);
+      });
+
+    this.accumulateUsage(totalPromptTokens, totalCompletionTokens);
+    await this.saveSettings();
 
     progress.finish(`✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
   }
@@ -333,6 +339,13 @@ export default class ImageManagerPlugin extends Plugin {
         (f) =>
           SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase()) && !this.isExcluded(f.path)
       );
+  }
+
+  accumulateUsage(promptTokens: number, completionTokens: number): void {
+    this.settings.altTextTotalRequests += 1;
+    this.settings.altTextTotalPromptTokens += promptTokens;
+    this.settings.altTextTotalCompletionTokens += completionTokens;
+    this.settings.altTextStatsUpdatedAt = new Date().toISOString();
   }
 
   async loadSettings() {
@@ -594,16 +607,84 @@ class ImageManagerSettingTab extends PluginSettingTab {
   }
 
   private renderAltTextCostEstimate(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+
+    // ── 예측 비용 ──────────────────────────────────────────────────
     const imageCount = this.plugin.app.vault
       .getFiles()
       .filter((f) => SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase())).length;
 
-    const is256 = this.plugin.settings.altTextMaxDimension === 256;
-    const tokensPerImage = is256 ? 85 : 170;
-    // gpt-4o-mini: $0.15/1M tokens, 환율 1,500원/$
+    const tokensPerImage = s.altTextMaxDimension === 256 ? 85 : 170;
+    // gpt-4o-mini input $0.15/1M, 환율 1,500원/$
     const wonPerImage = (tokensPerImage * 0.15 * 1500) / 1_000_000;
-    const totalCost = imageCount * wonPerImage;
 
+    const estimateBox = this.createInfoBox(containerEl);
+    estimateBox.createEl('div', {
+      text: '📊 예상 비용 (볼트 전체 처리 시)',
+      attr: { style: 'font-weight: 600; margin-bottom: 6px;' },
+    });
+    this.renderRows(estimateBox, [
+      ['처리 대상 이미지', `${imageCount.toLocaleString()}개`],
+      ['이미지당 토큰', `약 ${tokensPerImage} 토큰`],
+      ['이미지당 비용', `약 ${wonPerImage.toFixed(4)}원`],
+      ['전체 예상 비용', `약 ${(imageCount * wonPerImage).toFixed(2)}원`],
+    ]);
+    estimateBox.createEl('div', {
+      text: `* gpt-4o-mini 기준, 환율 1,500원/$, 이미지 크기 ${s.altTextMaxDimension}px`,
+      attr: { style: 'margin-top: 6px; color: var(--text-faint); font-size: 0.85em;' },
+    });
+
+    // ── 실사용 누적 비용 ────────────────────────────────────────────
+    const usageBox = this.createInfoBox(containerEl);
+
+    const headerRow = usageBox.createDiv({
+      attr: { style: 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;' },
+    });
+    headerRow.createEl('div', { text: '💳 실사용 누적 비용', attr: { style: 'font-weight: 600;' } });
+
+    const resetBtn = headerRow.createEl('button', { text: '초기화' });
+    resetBtn.style.cssText = 'font-size: 0.8em; padding: 2px 8px; cursor: pointer;';
+    resetBtn.addEventListener('click', async () => {
+      this.plugin.settings.altTextTotalRequests = 0;
+      this.plugin.settings.altTextTotalPromptTokens = 0;
+      this.plugin.settings.altTextTotalCompletionTokens = 0;
+      this.plugin.settings.altTextStatsUpdatedAt = '';
+      await this.plugin.saveSettings();
+      this.display();
+    });
+
+    if (s.altTextTotalRequests === 0) {
+      usageBox.createEl('div', {
+        text: '아직 사용 내역이 없습니다.',
+        attr: { style: 'color: var(--text-muted);' },
+      });
+    } else {
+      // input $0.15/1M, output $0.60/1M, 환율 1,500원/$
+      const inputCostWon = (s.altTextTotalPromptTokens * 0.15 * 1500) / 1_000_000;
+      const outputCostWon = (s.altTextTotalCompletionTokens * 0.60 * 1500) / 1_000_000;
+      const totalCostWon = inputCostWon + outputCostWon;
+
+      const updatedAt = s.altTextStatsUpdatedAt
+        ? new Date(s.altTextStatsUpdatedAt).toLocaleString('ko-KR')
+        : '–';
+
+      this.renderRows(usageBox, [
+        ['누적 요청 수', `${s.altTextTotalRequests.toLocaleString()}건`],
+        ['입력 토큰', `${s.altTextTotalPromptTokens.toLocaleString()}`],
+        ['출력 토큰', `${s.altTextTotalCompletionTokens.toLocaleString()}`],
+        ['입력 비용', `약 ${inputCostWon.toFixed(4)}원`],
+        ['출력 비용', `약 ${outputCostWon.toFixed(4)}원`],
+        ['누적 총 비용', `약 ${totalCostWon.toFixed(4)}원`],
+        ['마지막 업데이트', updatedAt],
+      ]);
+      usageBox.createEl('div', {
+        text: '* gpt-4o-mini 기준 (입력 $0.15/1M, 출력 $0.60/1M), 환율 1,500원/$',
+        attr: { style: 'margin-top: 6px; color: var(--text-faint); font-size: 0.85em;' },
+      });
+    }
+  }
+
+  private createInfoBox(containerEl: HTMLElement): HTMLElement {
     const box = containerEl.createDiv();
     box.style.cssText = `
       padding: 10px 14px;
@@ -613,36 +694,16 @@ class ImageManagerSettingTab extends PluginSettingTab {
       font-size: 0.9em;
       line-height: 1.6;
     `;
+    return box;
+  }
 
-    box.createEl('div', {
-      text: '💰 현재 볼트 기준 비용 예측',
-      attr: { style: 'font-weight: 600; margin-bottom: 6px;' },
-    });
-
-    const rows: [string, string][] = [
-      ['처리 대상 이미지', `${imageCount.toLocaleString()}개`],
-      ['이미지당 토큰', `약 ${tokensPerImage} 토큰`],
-      ['이미지당 비용', `약 ${wonPerImage.toFixed(4)}원`],
-      ['전체 예상 비용', `약 ${totalCost.toFixed(2)}원`],
-    ];
-
+  private renderRows(el: HTMLElement, rows: [string, string][]): void {
     for (const [label, value] of rows) {
-      const row = box.createDiv({
+      const row = el.createDiv({
         attr: { style: 'display: flex; justify-content: space-between; padding: 2px 0;' },
       });
-      row.createEl('span', {
-        text: label,
-        attr: { style: 'color: var(--text-muted);' },
-      });
-      row.createEl('span', {
-        text: value,
-        attr: { style: 'font-weight: 500;' },
-      });
+      row.createEl('span', { text: label, attr: { style: 'color: var(--text-muted);' } });
+      row.createEl('span', { text: value, attr: { style: 'font-weight: 500;' } });
     }
-
-    box.createEl('div', {
-      text: `* gpt-4o-mini 기준, 환율 1,500원/$ · 이미지 크기 ${this.plugin.settings.altTextMaxDimension}px 설정`,
-      attr: { style: 'margin-top: 6px; color: var(--text-faint); font-size: 0.85em;' },
-    });
   }
 }

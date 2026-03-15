@@ -19,6 +19,11 @@ export interface ImageManagerSettings {
   // Feature 6: 파일명 정규화
   renameEnabled: boolean;
   renameMode: 'reference' | 'alttext';
+  // Alt Text 실사용 누적 통계
+  altTextTotalRequests: number;
+  altTextTotalPromptTokens: number;
+  altTextTotalCompletionTokens: number;
+  altTextStatsUpdatedAt: string; // ISO 날짜 문자열
 }
 
 export const DEFAULT_SETTINGS: ImageManagerSettings = {
@@ -37,6 +42,10 @@ export const DEFAULT_SETTINGS: ImageManagerSettings = {
   altTextLanguage: '한국어',
   renameEnabled: false,
   renameMode: 'reference',
+  altTextTotalRequests: 0,
+  altTextTotalPromptTokens: 0,
+  altTextTotalCompletionTokens: 0,
+  altTextStatsUpdatedAt: '',
 };
 
 // gif: animated 제외, svg: vector 제외
