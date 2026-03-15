@@ -11,6 +11,14 @@ export function formatReduction(originalSize: number, newSize: number): string {
   return `${formatBytes(originalSize)} → ${formatBytes(newSize)} (-${pct}%)`;
 }
 
+/**
+ * Obsidian 이미지 wikilink의 파이프 값이 레이아웃/크기 수정자인지 판별.
+ * ![[image.webp|center]], ![[image.webp|200]], ![[image.webp|200x300]]
+ */
+export function isLayoutModifier(value: string): boolean {
+  return /^(center|left|right|\d+|\d+x\d+)$/i.test(value.trim());
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

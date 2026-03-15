@@ -17,11 +17,12 @@ export class ImageLocalizer {
 
   async localizeAll(
     onProgress: (current: number, total: number) => void
-  ): Promise<{ localized: number; failed: number }> {
+  ): Promise<{ localized: number; failed: number; errors: string[] }> {
     const mdFiles = this.app.vault.getFiles().filter((f) => f.extension === 'md');
 
     let localized = 0;
     let failed = 0;
+    const errors: string[] = [];
 
     for (let i = 0; i < mdFiles.length; i++) {
       onProgress(i + 1, mdFiles.length);
@@ -29,12 +30,14 @@ export class ImageLocalizer {
         const count = await this.processMarkdownFile(mdFiles[i]);
         localized += count;
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         console.error(`ImageLocalizer: 처리 실패 (${mdFiles[i].path})`, e);
+        errors.push(`${mdFiles[i].name}: ${msg}`);
         failed++;
       }
     }
 
-    return { localized, failed };
+    return { localized, failed, errors };
   }
 
   private async processMarkdownFile(mdFile: TFile): Promise<number> {

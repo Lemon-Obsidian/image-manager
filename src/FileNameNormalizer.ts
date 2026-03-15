@@ -1,5 +1,6 @@
 import { App, TFile } from 'obsidian';
 import { ImageManagerSettings } from './types';
+import { isLayoutModifier } from './utils';
 
 export class FileNameNormalizer {
   constructor(
@@ -10,8 +11,8 @@ export class FileNameNormalizer {
   async normalizeAll(
     files: TFile[],
     onProgress: (current: number, total: number) => void
-  ): Promise<{ renamed: number; skipped: number; failed: number }> {
-    const results = { renamed: 0, skipped: 0, failed: 0 };
+  ): Promise<{ renamed: number; skipped: number; failed: number; errors: string[] }> {
+    const results = { renamed: 0, skipped: 0, failed: 0, errors: [] as string[] };
 
     for (let i = 0; i < files.length; i++) {
       onProgress(i + 1, files.length);
@@ -23,7 +24,9 @@ export class FileNameNormalizer {
           results.skipped++;
         }
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         console.error(`FileNameNormalizer: 실패 (${files[i].name})`, e);
+        results.errors.push(`${files[i].name}: ${msg}`);
         results.failed++;
       }
     }
@@ -98,8 +101,11 @@ export class FileNameNormalizer {
     let match;
     while ((match = wikilinkWithAlt.exec(content)) !== null) {
       const ref = match[1].trim();
+      const pipeVal = match[2].trim();
+      // |center, |left, |200 등 레이아웃 수정자는 파일명 기준으로 사용하지 않음
+      if (isLayoutModifier(pipeVal)) continue;
       if (ref === filePath || ref === fileName || fileName.startsWith(ref)) {
-        return match[2].trim();
+        return pipeVal;
       }
     }
 
