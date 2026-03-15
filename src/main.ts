@@ -1,39 +1,42 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
-import { convertImage } from './ImageConverter';
+import { convertImage, getImageDataFromFile, imageDataToArrayBuffer, resizeImageData } from './ImageConverter';
 import {
   DEFAULT_SETTINGS,
   ImageManagerSettings,
   SUPPORTED_EXTENSIONS,
 } from './types';
+import { formatBytes, formatReduction } from './utils';
+import { DuplicateDetector } from './DuplicateDetector';
+import { DuplicateModal } from './DuplicateModal';
+import { ConversionRecord, ReportModal } from './ReportModal';
+import { ImageLocalizer } from './ImageLocalizer';
+import { AltTextGenerator } from './AltTextGenerator';
+import { FileNameNormalizer } from './FileNameNormalizer';
 
 interface ConversionResult {
   originalSize: number;
   newSize: number;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}
-
-function formatReduction(originalSize: number, newSize: number): string {
-  const pct = Math.round((1 - newSize / originalSize) * 100);
-  return `${formatBytes(originalSize)} → ${formatBytes(newSize)} (-${pct}%)`;
-}
-
 export default class ImageManagerPlugin extends Plugin {
   settings: ImageManagerSettings;
   private processing = new Set<string>();
+  private normalizer: FileNameNormalizer;
 
   async onload() {
     await this.loadSettings();
+    this.normalizer = new FileNameNormalizer(this.app, this.settings);
 
     this.registerEvent(
       this.app.vault.on('create', (file) => {
         if (!(file instanceof TFile)) return;
-        if (!this.settings.autoConvert) return;
-        this.processImage(file, true);
+        if (this.settings.autoConvert) {
+          this.processImage(file, true);
+        }
+        if (this.settings.renameEnabled) {
+          // metadataCache가 인덱싱할 시간 확보
+          setTimeout(() => this.normalizer.normalizeFile(file), 500);
+        }
       })
     );
 
@@ -41,6 +44,42 @@ export default class ImageManagerPlugin extends Plugin {
       id: 'convert-all-images',
       name: '볼트 내 이미지 일괄 변환',
       callback: () => this.convertAllImages(),
+    });
+
+    this.addCommand({
+      id: 'convert-with-report',
+      name: '압축 리포트 보기',
+      callback: () => this.convertAllImagesWithReport(),
+    });
+
+    this.addCommand({
+      id: 'detect-duplicates',
+      name: '이미지 중복 탐지',
+      callback: () => this.detectDuplicates(),
+    });
+
+    this.addCommand({
+      id: 'localize-images',
+      name: '외부 이미지 로컬화',
+      callback: () => this.localizeImages(),
+    });
+
+    this.addCommand({
+      id: 'generate-alt-text-active',
+      name: '선택 이미지 alt text 생성',
+      callback: () => this.generateAltTextForActive(),
+    });
+
+    this.addCommand({
+      id: 'generate-alt-text-all',
+      name: '볼트 전체 alt text 생성',
+      callback: () => this.generateAltTextForAll(),
+    });
+
+    this.addCommand({
+      id: 'normalize-filenames',
+      name: '이미지 파일명 정규화',
+      callback: () => this.normalizeFileNames(),
     });
 
     this.addSettingTab(new ImageManagerSettingTab(this.app, this));
@@ -62,13 +101,24 @@ export default class ImageManagerPlugin extends Plugin {
     this.processing.add(file.path);
     const originalPath = file.path;
     const originalName = file.name;
-    const { outputFormat, quality } = this.settings;
+    const { outputFormat, quality, autoResize, resizeMaxDimension } = this.settings;
 
     try {
-      const arrayBuffer = await this.app.vault.readBinary(file);
+      let arrayBuffer = await this.app.vault.readBinary(file);
       const originalSize = arrayBuffer.byteLength;
 
-      const converted = await convertImage(arrayBuffer, file.extension, outputFormat, quality);
+      let effectiveExtension = file.extension;
+
+      if (autoResize) {
+        const imageData = await getImageDataFromFile(arrayBuffer, effectiveExtension);
+        const resized = resizeImageData(imageData, resizeMaxDimension);
+        if (resized !== imageData) {
+          arrayBuffer = await imageDataToArrayBuffer(resized);
+          effectiveExtension = 'png';
+        }
+      }
+
+      const converted = await convertImage(arrayBuffer, effectiveExtension, outputFormat, quality);
       const newSize = converted.byteLength;
 
       const newPath = originalPath.replace(/\.[^.]+$/, `.${outputFormat}`);
@@ -102,13 +152,7 @@ export default class ImageManagerPlugin extends Plugin {
   }
 
   async convertAllImages(): Promise<void> {
-    const files = this.app.vault
-      .getFiles()
-      .filter(
-        (f) =>
-          SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase()) &&
-          !this.isExcluded(f.path)
-      );
+    const files = this.getImageFiles();
 
     if (files.length === 0) {
       new Notice('변환할 이미지가 없습니다.');
@@ -139,12 +183,168 @@ export default class ImageManagerPlugin extends Plugin {
     }
   }
 
+  async convertAllImagesWithReport(): Promise<void> {
+    const files = this.getImageFiles();
+
+    if (files.length === 0) {
+      new Notice('변환할 이미지가 없습니다.');
+      return;
+    }
+
+    const notice = new Notice(`이미지 변환 중... (0/${files.length})`, 0);
+    const records: ConversionRecord[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      notice.setMessage(`이미지 변환 중... (${i + 1}/${files.length})`);
+      const originalName = files[i].name;
+      const originalSize = files[i].stat.size;
+
+      const result = await this.processImage(files[i], false);
+      if (result) {
+        records.push({
+          originalName,
+          originalSize: result.originalSize,
+          newSize: result.newSize,
+          skipped: false,
+        });
+      } else {
+        records.push({
+          originalName,
+          originalSize,
+          newSize: originalSize,
+          skipped: true,
+        });
+      }
+    }
+
+    notice.hide();
+    new ReportModal(this.app, records).open();
+  }
+
+  private async detectDuplicates(): Promise<void> {
+    const files = this.getImageFiles();
+
+    if (files.length === 0) {
+      new Notice('이미지 파일이 없습니다.');
+      return;
+    }
+
+    const notice = new Notice(`해시 계산 중... (0/${files.length})`, 0);
+    const detector = new DuplicateDetector(this.app);
+
+    const groups = await detector.detectDuplicates(
+      files,
+      this.settings.duplicateThreshold,
+      (current, total) => notice.setMessage(`해시 계산 중... (${current}/${total})`)
+    );
+
+    notice.hide();
+    new DuplicateModal(this.app, groups).open();
+  }
+
+  private async localizeImages(): Promise<void> {
+    const notice = new Notice('외부 이미지 로컬화 중...', 0);
+    const localizer = new ImageLocalizer(this.app, this.settings);
+
+    const { localized, failed } = await localizer.localizeAll((current, total) => {
+      notice.setMessage(`마크다운 파일 처리 중... (${current}/${total})`);
+    });
+
+    notice.hide();
+    new Notice(
+      failed > 0
+        ? `✓ 로컬화: ${localized}개 / ✗ 실패: ${failed}개`
+        : `✓ ${localized}개 이미지를 로컬화했습니다.`
+    );
+  }
+
+  private async generateAltTextForActive(): Promise<void> {
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile || !SUPPORTED_EXTENSIONS.includes(activeFile.extension.toLowerCase())) {
+      new Notice('이미지 파일을 선택해주세요.');
+      return;
+    }
+
+    if (!this.settings.altTextEnabled || !this.settings.openaiApiKey) {
+      new Notice('Alt Text 생성을 활성화하고 API 키를 입력해주세요.');
+      return;
+    }
+
+    const notice = new Notice(`Alt text 생성 중: ${activeFile.name}`, 0);
+    const generator = new AltTextGenerator(this.app, this.settings);
+
+    try {
+      const altText = await generator.generateForFile(activeFile);
+      notice.hide();
+      if (altText) {
+        new Notice(`✓ Alt text 생성 완료: "${altText}"`);
+      } else {
+        new Notice('Alt text 생성을 건너뛰었습니다.');
+      }
+    } catch (e) {
+      notice.hide();
+      new Notice(`✗ Alt text 생성 실패: ${(e as Error).message}`);
+    }
+  }
+
+  private async generateAltTextForAll(): Promise<void> {
+    if (!this.settings.altTextEnabled || !this.settings.openaiApiKey) {
+      new Notice('Alt Text 생성을 활성화하고 API 키를 입력해주세요.');
+      return;
+    }
+
+    const files = this.getImageFiles();
+    if (files.length === 0) {
+      new Notice('이미지 파일이 없습니다.');
+      return;
+    }
+
+    const notice = new Notice(`Alt text 생성 중... (0/${files.length})`, 0);
+    const generator = new AltTextGenerator(this.app, this.settings);
+
+    const { success, failed, skipped } = await generator.generateForAll(files, (current, total) => {
+      notice.setMessage(`Alt text 생성 중... (${current}/${total})`);
+    });
+
+    notice.hide();
+    new Notice(`✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
+  }
+
+  private async normalizeFileNames(): Promise<void> {
+    const files = this.getImageFiles();
+    if (files.length === 0) {
+      new Notice('이미지 파일이 없습니다.');
+      return;
+    }
+
+    const notice = new Notice(`파일명 정규화 중... (0/${files.length})`, 0);
+
+    const { renamed, skipped, failed } = await this.normalizer.normalizeAll(
+      files,
+      (current, total) => notice.setMessage(`파일명 정규화 중... (${current}/${total})`)
+    );
+
+    notice.hide();
+    new Notice(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
+  }
+
+  private getImageFiles(): TFile[] {
+    return this.app.vault
+      .getFiles()
+      .filter(
+        (f) =>
+          SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase()) && !this.isExcluded(f.path)
+      );
+  }
+
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
+    // normalizer가 항상 최신 settings를 참조하도록 재생성
+    this.normalizer = new FileNameNormalizer(this.app, this.settings);
   }
 }
 
@@ -160,6 +360,9 @@ class ImageManagerSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: 'Image Manager' });
+
+    // ─── 기본 변환 설정 ───────────────────────────────────────────────
+    containerEl.createEl('h3', { text: '기본 변환 설정' });
 
     new Setting(containerEl)
       .setName('자동 변환')
@@ -218,5 +421,175 @@ class ImageManagerSettingTab extends PluginSettingTab {
         text.inputEl.rows = 5;
         text.inputEl.style.width = '100%';
       });
+
+    // ─── 이미지 리사이즈 ─────────────────────────────────────────────
+    containerEl.createEl('h3', { text: '이미지 리사이즈' });
+
+    new Setting(containerEl)
+      .setName('자동 리사이즈')
+      .setDesc('변환 전 이미지를 지정한 크기 이하로 축소합니다.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.autoResize)
+          .onChange(async (value) => {
+            this.plugin.settings.autoResize = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('최대 크기')
+      .setDesc('이미지의 가로/세로 최대 픽셀 수')
+      .addDropdown((drop) =>
+        drop
+          .addOption('1920', '1920px (FHD)')
+          .addOption('2560', '2560px (QHD)')
+          .addOption('4096', '4096px (4K)')
+          .setValue(String(this.plugin.settings.resizeMaxDimension))
+          .onChange(async (value) => {
+            this.plugin.settings.resizeMaxDimension = Number(value) as 1920 | 2560 | 4096;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // ─── 이미지 중복 탐지 ────────────────────────────────────────────
+    containerEl.createEl('h3', { text: '이미지 중복 탐지' });
+
+    new Setting(containerEl)
+      .setName('유사도 임계값')
+      .setDesc(
+        '해밍 거리 기준 (0: 완전 일치, 20: 매우 유사). 기본값: 5'
+      )
+      .addSlider((slider) =>
+        slider
+          .setLimits(0, 20, 1)
+          .setValue(this.plugin.settings.duplicateThreshold)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.duplicateThreshold = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // ─── 외부 이미지 로컬화 ──────────────────────────────────────────
+    containerEl.createEl('h3', { text: '외부 이미지 로컬화' });
+
+    new Setting(containerEl)
+      .setName('저장 경로')
+      .setDesc('다운로드한 이미지를 저장할 볼트 내 폴더 경로')
+      .addText((text) =>
+        text
+          .setPlaceholder('Attachments')
+          .setValue(this.plugin.settings.localizeSavePath)
+          .onChange(async (value) => {
+            this.plugin.settings.localizeSavePath = value.trim() || 'Attachments';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // ─── Alt Text 자동 생성 ──────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Alt Text 자동 생성' });
+
+    new Setting(containerEl)
+      .setName('활성화')
+      .setDesc('이미지를 리사이즈 후 OpenAI 비전 API에 전송해 alt text를 자동 생성합니다.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.altTextEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.altTextEnabled = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('OpenAI API 키')
+      .setDesc('OpenAI API 인증 키 (sk-...)')
+      .addText((text) => {
+        text.inputEl.type = 'password';
+        text
+          .setPlaceholder('sk-...')
+          .setValue(this.plugin.settings.openaiApiKey)
+          .onChange(async (value) => {
+            this.plugin.settings.openaiApiKey = value.trim();
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName('모델')
+      .setDesc('사용할 OpenAI 비전 모델')
+      .addText((text) =>
+        text
+          .setPlaceholder('gpt-4o-mini')
+          .setValue(this.plugin.settings.altTextModel)
+          .onChange(async (value) => {
+            this.plugin.settings.altTextModel = value.trim() || 'gpt-4o-mini';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('이미지 전송 크기')
+      .setDesc('API 전송 전 이미지를 축소합니다.')
+      .addDropdown((drop) =>
+        drop
+          .addOption('256', '256px — 약 85 토큰/이미지 · 1,000장 ≈ 45원 (환율 1,500원 기준)')
+          .addOption('512', '512px — 약 170 토큰/이미지 · 1,000장 ≈ 75원')
+          .setValue(String(this.plugin.settings.altTextMaxDimension))
+          .onChange(async (value) => {
+            this.plugin.settings.altTextMaxDimension = Number(value) as 256 | 512;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('언어')
+      .setDesc('생성할 alt text의 언어')
+      .addText((text) =>
+        text
+          .setPlaceholder('한국어')
+          .setValue(this.plugin.settings.altTextLanguage)
+          .onChange(async (value) => {
+            this.plugin.settings.altTextLanguage = value.trim() || '한국어';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // ─── 이미지 파일명 정규화 ────────────────────────────────────────
+    containerEl.createEl('h3', { text: '이미지 파일명 정규화' });
+
+    new Setting(containerEl)
+      .setName('자동 정규화')
+      .setDesc('이미지가 추가될 때 자동으로 파일명을 정규화합니다.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.renameEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.renameEnabled = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    const renameModeDesc =
+      this.plugin.settings.renameMode === 'alttext' && !this.plugin.settings.altTextEnabled
+        ? '⚠️ Alt Text 생성이 비활성화되어 있습니다. Alt Text 생성을 먼저 활성화하세요.'
+        : '파일명의 기준으로 사용할 정보';
+
+    new Setting(containerEl)
+      .setName('정규화 모드')
+      .setDesc(renameModeDesc)
+      .addDropdown((drop) =>
+        drop
+          .addOption('reference', '참조 노트 제목 사용')
+          .addOption('alttext', 'Alt Text 사용 (Alt Text 생성 활성화 필요)')
+          .setValue(this.plugin.settings.renameMode)
+          .onChange(async (value) => {
+            this.plugin.settings.renameMode = value as 'reference' | 'alttext';
+            await this.plugin.saveSettings();
+            // 경고 표시를 위해 탭 새로고침
+            this.display();
+          })
+      );
   }
 }

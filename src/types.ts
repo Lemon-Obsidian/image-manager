@@ -3,6 +3,22 @@ export interface ImageManagerSettings {
   autoConvert: boolean;
   outputFormat: 'webp' | 'avif';
   excludeFolders: string[];
+  // Feature 1: 이미지 리사이즈
+  autoResize: boolean;
+  resizeMaxDimension: 1920 | 2560 | 4096;
+  // Feature 2: 중복 탐지
+  duplicateThreshold: number;
+  // Feature 4: 외부 이미지 로컬화
+  localizeSavePath: string;
+  // Feature 5: Alt Text 자동 생성
+  altTextEnabled: boolean;
+  openaiApiKey: string;
+  altTextModel: string;
+  altTextMaxDimension: 256 | 512;
+  altTextLanguage: string;
+  // Feature 6: 파일명 정규화
+  renameEnabled: boolean;
+  renameMode: 'reference' | 'alttext';
 }
 
 export const DEFAULT_SETTINGS: ImageManagerSettings = {
@@ -10,6 +26,17 @@ export const DEFAULT_SETTINGS: ImageManagerSettings = {
   autoConvert: true,
   outputFormat: 'webp',
   excludeFolders: [],
+  autoResize: false,
+  resizeMaxDimension: 1920,
+  duplicateThreshold: 5,
+  localizeSavePath: 'Attachments',
+  altTextEnabled: false,
+  openaiApiKey: '',
+  altTextModel: 'gpt-4o-mini',
+  altTextMaxDimension: 256,
+  altTextLanguage: '한국어',
+  renameEnabled: false,
+  renameMode: 'reference',
 };
 
 // gif: animated 제외, svg: vector 제외
