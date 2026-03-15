@@ -201,8 +201,11 @@ export class AltTextGenerator {
     }
 
     const json = response.json;
+    const choice = json.choices?.[0];
+    const content = choice?.message?.content ?? choice?.message?.refusal ?? '';
+    console.log('AltTextGenerator: OpenAI 응답', JSON.stringify({ finish_reason: choice?.finish_reason, content, usage: json.usage }));
     return {
-      text: (json.choices[0].message.content as string).trim(),
+      text: (content as string).trim(),
       promptTokens: json.usage?.prompt_tokens ?? 0,
       completionTokens: json.usage?.completion_tokens ?? 0,
     };
