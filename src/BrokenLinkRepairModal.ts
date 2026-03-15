@@ -14,6 +14,8 @@ export class BrokenLinkRepairModal extends Modal {
   private orphanImages: TFile[] = [];
   private linkIdx = 0;
   private candPage = 0;
+  private noteCache = new Map<string, string>();
+  private currentNoteContent = '';
 
   constructor(
     app: App,
@@ -48,8 +50,20 @@ export class BrokenLinkRepairModal extends Modal {
   }
 
   onOpen(): void {
-    this.modalEl.style.width = '880px';
-    this.modalEl.style.maxWidth = '95vw';
+    this.modalEl.style.width = '1360px';
+    this.modalEl.style.maxWidth = '96vw';
+    if (this.links.length > 0) {
+      this.loadAndRender(this.links[this.linkIdx].mdFile);
+    } else {
+      this.render();
+    }
+  }
+
+  private async loadAndRender(file: TFile): Promise<void> {
+    if (!this.noteCache.has(file.path)) {
+      this.noteCache.set(file.path, await this.app.vault.read(file));
+    }
+    this.currentNoteContent = this.noteCache.get(file.path)!;
     this.render();
   }
 
@@ -75,46 +89,87 @@ export class BrokenLinkRepairModal extends Modal {
       return;
     }
 
-    // ── 후보 모드 토글 ─────────────────────────────────────────────
-    const toggleBar = contentEl.createDiv({
-      attr: { style: 'display:flex;align-items:center;gap:8px;margin-bottom:12px;background:var(--background-secondary);padding:8px 12px;border-radius:6px;' },
+    // ── 좌우 분할 ──────────────────────────────────────────────────
+    const main = contentEl.createDiv({
+      attr: { style: 'display:flex;gap:0;align-items:stretch;height:calc(85vh - 80px);overflow:hidden;' },
     });
-    toggleBar.createEl('span', { text: '후보 이미지:', attr: { style: 'color:var(--text-muted);font-size:0.85em;' } });
 
-    for (const [label, value] of [
-      [`고아 이미지 (${this.orphanImages.length}개)`, 'orphan'],
-      [`전체 이미지 (${this.allImages.length}개)`, 'all'],
-    ] as [string, CandidateMode][]) {
-      const btn = toggleBar.createEl('button', { text: label });
-      btn.style.cssText = `font-size:0.85em;padding:3px 12px;cursor:pointer;border-radius:4px;${
-        this.mode === value ? 'background:var(--interactive-accent);color:var(--text-on-accent);border:none;' : ''
-      }`;
-      btn.addEventListener('click', () => {
-        this.mode = value;
-        this.candPage = 0;
-        this.autoMatch();
-        this.render();
-      });
+    const link = this.links[this.linkIdx];
+    this.renderNotePanel(main, link);
+    this.renderCandidatePanel(main, link);
+  }
+
+  // ── 좌측: 노트 뷰어 ──────────────────────────────────────────────
+  private renderNotePanel(container: HTMLElement, link: BrokenLink): void {
+    const panel = container.createDiv({
+      attr: { style: 'width:42%;display:flex;flex-direction:column;border-right:1px solid var(--background-modifier-border);padding-right:14px;overflow:hidden;' },
+    });
+
+    // 노트 제목
+    panel.createDiv({
+      text: `📄 ${link.mdFile.basename}`,
+      attr: { style: 'font-size:0.85em;font-weight:600;color:var(--text-muted);padding-bottom:8px;flex-shrink:0;' },
+    });
+
+    // 노트 내용
+    const contentArea = panel.createDiv({
+      attr: { style: 'flex:1;overflow-y:auto;background:var(--background-primary);border:1px solid var(--background-modifier-border);border-radius:6px;' },
+    });
+
+    const lines = this.currentNoteContent.split('\n');
+    const hlIdx = lines.findIndex(l => l.includes(link.original));
+
+    const pre = contentArea.createEl('pre', {
+      attr: { style: 'margin:0;padding:10px 12px;font-size:0.8em;line-height:1.7;white-space:pre-wrap;word-break:break-word;font-family:var(--font-monospace);' },
+    });
+
+    // 하이라이트 앞 텍스트
+    const beforeText = hlIdx > 0 ? lines.slice(0, hlIdx).join('\n') + '\n' : (hlIdx === 0 ? '' : lines.join('\n'));
+    if (beforeText) pre.appendText(beforeText);
+
+    // 하이라이트 라인
+    let highlightEl: HTMLElement | null = null;
+    if (hlIdx >= 0) {
+      const span = pre.createSpan();
+      span.textContent = lines[hlIdx] + (hlIdx < lines.length - 1 ? '\n' : '');
+      span.style.cssText = 'background:rgba(255,200,0,0.2);display:block;border-left:3px solid var(--color-yellow);padding-left:6px;margin-left:-6px;border-radius:0 2px 2px 0;';
+      highlightEl = span;
     }
 
-    // ── 링크 정보 카드 ─────────────────────────────────────────────
-    const link = this.links[this.linkIdx];
+    // 하이라이트 뒤 텍스트
+    if (hlIdx >= 0 && hlIdx < lines.length - 1) {
+      pre.appendText(lines.slice(hlIdx + 1).join('\n'));
+    }
+
+    // 하이라이트 라인으로 스크롤
+    if (highlightEl) {
+      setTimeout(() => highlightEl?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+    }
+  }
+
+  // ── 우측: 후보 선택 패널 ─────────────────────────────────────────
+  private renderCandidatePanel(container: HTMLElement, link: BrokenLink): void {
+    const panel = container.createDiv({
+      attr: { style: 'flex:1;display:flex;flex-direction:column;padding-left:14px;overflow:hidden;' },
+    });
+
     const key = this.key(link);
     const selected = this.repairs.get(key) ?? null;
     const ranked = BrokenLinkFinder.rankCandidates(link.ref, this.candidates);
 
-    const infoCard = contentEl.createDiv({
-      attr: { style: 'background:var(--background-secondary);border:1px solid var(--background-modifier-border);border-radius:8px;padding:12px 14px;margin-bottom:12px;' },
+    // 스크롤 가능한 상단 영역
+    const scrollArea = panel.createDiv({
+      attr: { style: 'flex:1;overflow-y:auto;' },
     });
 
+    // ── 링크 정보 ─────────────────────────────────────────────
+    const infoCard = scrollArea.createDiv({
+      attr: { style: 'background:var(--background-secondary);border:1px solid var(--background-modifier-border);border-radius:8px;padding:10px 12px;margin-bottom:10px;' },
+    });
     const infoTop = infoCard.createDiv({
       attr: { style: 'display:flex;justify-content:space-between;align-items:flex-start;' },
     });
     const infoLeft = infoTop.createDiv();
-    infoLeft.createEl('div', {
-      text: `📄 ${link.mdFile.basename}`,
-      attr: { style: 'font-size:0.82em;color:var(--text-muted);margin-bottom:4px;' },
-    });
     infoLeft.createEl('div', {
       text: `🔴 ${link.ref}`,
       attr: { style: 'font-size:0.9em;font-weight:600;color:var(--color-red);word-break:break-all;' },
@@ -125,12 +180,10 @@ export class BrokenLinkRepairModal extends Modal {
         attr: { style: 'font-size:0.78em;color:var(--text-faint);margin-top:2px;' },
       });
     }
-
     infoTop.createEl('span', {
       text: `${this.linkIdx + 1} / ${this.links.length}`,
       attr: { style: 'font-size:0.85em;color:var(--text-muted);white-space:nowrap;margin-left:12px;' },
     });
-
     if (selected) {
       infoCard.createEl('div', {
         text: `✓ 선택됨: ${selected.name}`,
@@ -138,27 +191,44 @@ export class BrokenLinkRepairModal extends Modal {
       });
     }
 
-    // ── 후보 그리드 ────────────────────────────────────────────────
+    // ── 후보 모드 토글 ────────────────────────────────────────
+    const toggleBar = scrollArea.createDiv({
+      attr: { style: 'display:flex;align-items:center;gap:6px;margin-bottom:10px;' },
+    });
+    toggleBar.createEl('span', { text: '후보:', attr: { style: 'color:var(--text-muted);font-size:0.82em;' } });
+    for (const [label, value] of [
+      [`고아 (${this.orphanImages.length}개)`, 'orphan'],
+      [`전체 (${this.allImages.length}개)`, 'all'],
+    ] as [string, CandidateMode][]) {
+      const btn = toggleBar.createEl('button', { text: label });
+      btn.style.cssText = `font-size:0.82em;padding:2px 10px;cursor:pointer;border-radius:4px;${
+        this.mode === value ? 'background:var(--interactive-accent);color:var(--text-on-accent);border:none;' : ''
+      }`;
+      btn.addEventListener('click', () => {
+        this.mode = value;
+        this.candPage = 0;
+        this.autoMatch();
+        this.render();
+      });
+    }
+
+    // ── 후보 그리드 ───────────────────────────────────────────
     if (ranked.length === 0) {
-      contentEl.createEl('div', {
+      scrollArea.createEl('div', {
         text: '후보 이미지 없음',
         attr: { style: 'color:var(--text-muted);font-size:0.85em;text-align:center;padding:24px 0;' },
       });
     } else {
       const totalCandPages = Math.ceil(ranked.length / CAND_PAGE_SIZE);
-      const candStart = this.candPage * CAND_PAGE_SIZE;
-      const pageCands = ranked.slice(candStart, candStart + CAND_PAGE_SIZE);
+      const pageCands = ranked.slice(this.candPage * CAND_PAGE_SIZE, (this.candPage + 1) * CAND_PAGE_SIZE);
 
-      const candHeader = contentEl.createDiv({
-        attr: { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;' },
-      });
-      candHeader.createEl('span', {
+      scrollArea.createEl('div', {
         text: `후보 이미지 (${ranked.length}개)`,
-        attr: { style: 'font-size:0.85em;color:var(--text-muted);' },
+        attr: { style: 'font-size:0.82em;color:var(--text-muted);margin-bottom:6px;' },
       });
 
-      const grid = contentEl.createDiv({
-        attr: { style: `display:grid;grid-template-columns:repeat(${COLS},1fr);gap:10px;margin-bottom:10px;` },
+      const grid = scrollArea.createDiv({
+        attr: { style: `display:grid;grid-template-columns:repeat(${COLS},1fr);gap:8px;margin-bottom:8px;` },
       });
       for (const cand of pageCands) {
         this.renderCandCard(grid, cand, selected, key);
@@ -166,42 +236,49 @@ export class BrokenLinkRepairModal extends Modal {
 
       // 후보 페이지네이션
       if (totalCandPages > 1) {
-        const candNav = contentEl.createDiv({
-          attr: { style: 'display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:10px;' },
+        const candNav = scrollArea.createDiv({
+          attr: { style: 'display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:8px;' },
         });
         const cpPrev = candNav.createEl('button', { text: '← 이전' });
         cpPrev.disabled = this.candPage === 0;
-        cpPrev.style.cssText = 'font-size:0.85em;padding:3px 10px;cursor:pointer;';
+        cpPrev.style.cssText = 'font-size:0.82em;padding:2px 8px;cursor:pointer;';
         cpPrev.addEventListener('click', () => { this.candPage--; this.render(); });
-
         candNav.createEl('span', {
           text: `${this.candPage + 1} / ${totalCandPages}`,
-          attr: { style: 'font-size:0.85em;color:var(--text-muted);min-width:50px;text-align:center;' },
+          attr: { style: 'font-size:0.82em;color:var(--text-muted);min-width:44px;text-align:center;' },
         });
-
         const cpNext = candNav.createEl('button', { text: '다음 →' });
         cpNext.disabled = this.candPage >= totalCandPages - 1;
-        cpNext.style.cssText = 'font-size:0.85em;padding:3px 10px;cursor:pointer;';
+        cpNext.style.cssText = 'font-size:0.82em;padding:2px 8px;cursor:pointer;';
         cpNext.addEventListener('click', () => { this.candPage++; this.render(); });
       }
     }
 
-    // ── 하단 네비게이션 ────────────────────────────────────────────
-    const nav = contentEl.createDiv({
-      attr: { style: 'display:flex;align-items:center;gap:8px;padding-top:10px;border-top:1px solid var(--background-modifier-border);' },
+    // ── 하단 네비게이션 (고정) ────────────────────────────────
+    const nav = panel.createDiv({
+      attr: { style: 'flex-shrink:0;display:flex;align-items:center;gap:8px;padding-top:10px;border-top:1px solid var(--background-modifier-border);' },
     });
 
     const prevBtn = nav.createEl('button', { text: '← 이전' });
     prevBtn.disabled = this.linkIdx === 0;
     prevBtn.style.cssText = 'padding:4px 12px;cursor:pointer;';
-    prevBtn.addEventListener('click', () => { this.linkIdx--; this.candPage = 0; this.render(); });
+    prevBtn.addEventListener('click', () => {
+      this.linkIdx--;
+      this.candPage = 0;
+      this.loadAndRender(this.links[this.linkIdx].mdFile);
+    });
 
     const skipBtn = nav.createEl('button', { text: '건너뜀' });
     skipBtn.style.cssText = 'padding:4px 12px;cursor:pointer;font-size:0.85em;';
     skipBtn.addEventListener('click', () => {
       this.repairs.set(key, null);
-      if (this.linkIdx < this.links.length - 1) { this.linkIdx++; this.candPage = 0; }
-      this.render();
+      if (this.linkIdx < this.links.length - 1) {
+        this.linkIdx++;
+        this.candPage = 0;
+        this.loadAndRender(this.links[this.linkIdx].mdFile);
+      } else {
+        this.render();
+      }
     });
 
     nav.createDiv({ attr: { style: 'flex:1;' } });
@@ -219,7 +296,11 @@ export class BrokenLinkRepairModal extends Modal {
     const nextBtn = nav.createEl('button', { text: '다음 →' });
     nextBtn.disabled = this.linkIdx >= this.links.length - 1;
     nextBtn.style.cssText = 'padding:4px 12px;cursor:pointer;';
-    nextBtn.addEventListener('click', () => { this.linkIdx++; this.candPage = 0; this.render(); });
+    nextBtn.addEventListener('click', () => {
+      this.linkIdx++;
+      this.candPage = 0;
+      this.loadAndRender(this.links[this.linkIdx].mdFile);
+    });
   }
 
   private renderCandCard(container: HTMLElement, file: TFile, selected: TFile | null, key: string): void {
@@ -229,8 +310,7 @@ export class BrokenLinkRepairModal extends Modal {
     card.style.cssText = `
       position:relative;border-radius:8px;overflow:hidden;cursor:pointer;
       border:2px solid ${isSelected ? 'var(--color-accent)' : 'transparent'};
-      background:var(--background-secondary);
-      transition:border-color 0.15s;
+      background:var(--background-secondary);transition:border-color 0.15s;
     `;
 
     const imgWrap = card.createDiv({
@@ -242,8 +322,8 @@ export class BrokenLinkRepairModal extends Modal {
     img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
     img.onerror = () => {
       imgWrap.empty();
-      const placeholder = imgWrap.createEl('span', { text: '🖼' });
-      placeholder.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:2em;';
+      const ph = imgWrap.createEl('span', { text: '🖼' });
+      ph.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:2em;';
     };
 
     // 체크 오버레이
@@ -252,7 +332,7 @@ export class BrokenLinkRepairModal extends Modal {
       position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:50%;
       display:flex;align-items:center;justify-content:center;font-size:0.8em;
       background:${isSelected ? 'var(--color-accent)' : 'rgba(0,0,0,0.35)'};
-      color:#fff;transition:background 0.15s;font-weight:bold;
+      color:#fff;font-weight:bold;
     `;
     checkOverlay.textContent = isSelected ? '✓' : '';
 
