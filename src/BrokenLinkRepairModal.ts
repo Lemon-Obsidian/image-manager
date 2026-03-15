@@ -16,8 +16,9 @@ export class BrokenLinkRepairModal extends Modal {
   private orphanImages: TFile[] = [];
   private linkIdx = 0;
   private candPage = 0;
-  private noteCache = new Map<string, string>();
-  private currentNoteContent = '';
+  private searchQuery = '';
+  /** 노트별 편집 내용. 삭제·수동 편집 모두 여기에 누적됨 */
+  private noteEdits = new Map<string, string>();
 
   constructor(
     app: App,
@@ -30,10 +31,7 @@ export class BrokenLinkRepairModal extends Modal {
     this.links = links;
     this.allImages = allImages;
     this.orphanImages = orphanImages;
-    // 초기값 전부 null — 사용자가 명시적으로 클릭한 것만 복구됨
-    for (const link of this.links) {
-      this.repairs.set(this.key(link), null);
-    }
+    for (const link of this.links) this.repairs.set(this.key(link), null);
   }
 
   private key(link: BrokenLink): string {
@@ -44,8 +42,12 @@ export class BrokenLinkRepairModal extends Modal {
     return this.mode === 'orphan' ? this.orphanImages : this.allImages;
   }
 
-  private get assignedCount(): number {
-    return [...this.repairs.values()].filter(Boolean).length;
+  private get repairCount(): number {
+    return [...this.repairs.values()].filter(v => v instanceof TFile).length;
+  }
+
+  private get editCount(): number {
+    return this.noteEdits.size;
   }
 
   onOpen(): void {
@@ -59,10 +61,9 @@ export class BrokenLinkRepairModal extends Modal {
   }
 
   private async loadAndRender(file: TFile): Promise<void> {
-    if (!this.noteCache.has(file.path)) {
-      this.noteCache.set(file.path, await this.app.vault.read(file));
+    if (!this.noteEdits.has(file.path)) {
+      this.noteEdits.set(file.path, await this.app.vault.read(file));
     }
-    this.currentNoteContent = this.noteCache.get(file.path)!;
     this.render();
   }
 
@@ -98,55 +99,45 @@ export class BrokenLinkRepairModal extends Modal {
     this.renderCandidatePanel(main, link);
   }
 
-  // ── 좌측: 노트 뷰어 ──────────────────────────────────────────────
+  // ── 좌측: 편집 가능한 노트 뷰어 ────────────────────────────────
   private renderNotePanel(container: HTMLElement, link: BrokenLink): void {
     const panel = container.createDiv({
       attr: { style: 'width:42%;display:flex;flex-direction:column;border-right:1px solid var(--background-modifier-border);padding-right:14px;overflow:hidden;' },
     });
 
-    // 노트 제목
     panel.createDiv({
       text: `📄 ${link.mdFile.basename}`,
       attr: { style: 'font-size:0.85em;font-weight:600;color:var(--text-muted);padding-bottom:8px;flex-shrink:0;' },
     });
 
-    // 노트 내용
-    const contentArea = panel.createDiv({
-      attr: { style: 'flex:1;overflow-y:auto;background:var(--background-primary);border:1px solid var(--background-modifier-border);border-radius:6px;' },
+    const content = this.noteEdits.get(link.mdFile.path) ?? '';
+
+    const textarea = panel.createEl('textarea');
+    textarea.value = content;
+    textarea.style.cssText = `
+      flex:1;width:100%;box-sizing:border-box;resize:none;
+      background:var(--background-primary);color:var(--text-normal);
+      border:1px solid var(--background-modifier-border);border-radius:6px;
+      padding:10px 12px;font-size:0.8em;line-height:1.7;
+      font-family:var(--font-monospace);
+    `;
+
+    // 편집 즉시 반영
+    textarea.addEventListener('input', () => {
+      this.noteEdits.set(link.mdFile.path, textarea.value);
     });
 
-    const lines = this.currentNoteContent.split('\n');
-    const hlIdx = lines.findIndex(l => l.includes(link.original));
-
-    const pre = contentArea.createEl('pre', {
-      attr: { style: 'margin:0;padding:10px 12px;font-size:0.8em;line-height:1.7;white-space:pre-wrap;word-break:break-word;font-family:var(--font-monospace);' },
-    });
-
-    // 하이라이트 앞 텍스트
-    const beforeText = hlIdx > 0 ? lines.slice(0, hlIdx).join('\n') + '\n' : (hlIdx === 0 ? '' : lines.join('\n'));
-    if (beforeText) pre.appendText(beforeText);
-
-    // 하이라이트 라인
-    let highlightEl: HTMLElement | null = null;
+    // 깨진 링크 라인으로 스크롤
+    const hlIdx = content.split('\n').findIndex(l => l.includes(link.original));
     if (hlIdx >= 0) {
-      const span = pre.createSpan();
-      span.textContent = lines[hlIdx] + (hlIdx < lines.length - 1 ? '\n' : '');
-      span.style.cssText = 'background:rgba(255,200,0,0.2);display:block;border-left:3px solid var(--color-yellow);padding-left:6px;margin-left:-6px;border-radius:0 2px 2px 0;';
-      highlightEl = span;
-    }
-
-    // 하이라이트 뒤 텍스트
-    if (hlIdx >= 0 && hlIdx < lines.length - 1) {
-      pre.appendText(lines.slice(hlIdx + 1).join('\n'));
-    }
-
-    // 하이라이트 라인으로 스크롤
-    if (highlightEl) {
-      setTimeout(() => highlightEl?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+      setTimeout(() => {
+        const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 22;
+        textarea.scrollTop = Math.max(0, (hlIdx - 3) * lineHeight);
+      }, 60);
     }
   }
 
-  // ── 우측: 후보 선택 패널 ─────────────────────────────────────────
+  // ── 우측: 후보 선택 패널 ────────────────────────────────────────
   private renderCandidatePanel(container: HTMLElement, link: BrokenLink): void {
     const panel = container.createDiv({
       attr: { style: 'flex:1;display:flex;flex-direction:column;padding-left:14px;overflow:hidden;' },
@@ -154,12 +145,12 @@ export class BrokenLinkRepairModal extends Modal {
 
     const key = this.key(link);
     const selected = this.repairs.get(key) ?? null;
-    const ranked = BrokenLinkFinder.rankCandidates(link.ref, this.candidates);
+    const allRanked = BrokenLinkFinder.rankCandidates(link.ref, this.candidates);
+    const ranked = this.searchQuery
+      ? allRanked.filter(f => f.name.toLowerCase().includes(this.searchQuery.toLowerCase()))
+      : allRanked;
 
-    // 스크롤 가능한 상단 영역
-    const scrollArea = panel.createDiv({
-      attr: { style: 'flex:1;overflow-y:auto;' },
-    });
+    const scrollArea = panel.createDiv({ attr: { style: 'flex:1;overflow-y:auto;' } });
 
     // ── 링크 정보 ─────────────────────────────────────────────
     const infoCard = scrollArea.createDiv({
@@ -190,16 +181,16 @@ export class BrokenLinkRepairModal extends Modal {
       });
     }
 
-    // ── 후보 모드 토글 ────────────────────────────────────────
-    const toggleBar = scrollArea.createDiv({
-      attr: { style: 'display:flex;align-items:center;gap:6px;margin-bottom:10px;' },
+    // ── 후보 모드 토글 + 검색 ────────────────────────────────
+    const controlBar = scrollArea.createDiv({
+      attr: { style: 'display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;' },
     });
-    toggleBar.createEl('span', { text: '후보:', attr: { style: 'color:var(--text-muted);font-size:0.82em;' } });
+    controlBar.createEl('span', { text: '후보:', attr: { style: 'color:var(--text-muted);font-size:0.82em;' } });
     for (const [label, value] of [
       [`고아 (${this.orphanImages.length}개)`, 'orphan'],
       [`전체 (${this.allImages.length}개)`, 'all'],
     ] as [string, CandidateMode][]) {
-      const btn = toggleBar.createEl('button', { text: label });
+      const btn = controlBar.createEl('button', { text: label });
       btn.style.cssText = `font-size:0.82em;padding:2px 10px;cursor:pointer;border-radius:4px;${
         this.mode === value ? 'background:var(--interactive-accent);color:var(--text-on-accent);border:none;' : ''
       }`;
@@ -210,10 +201,28 @@ export class BrokenLinkRepairModal extends Modal {
       });
     }
 
+    controlBar.createDiv({ attr: { style: 'flex:1;' } });
+
+    const searchInput = controlBar.createEl('input') as HTMLInputElement;
+    searchInput.type = 'text';
+    searchInput.placeholder = '이미지 이름 검색...';
+    searchInput.value = this.searchQuery;
+    searchInput.style.cssText = 'font-size:0.82em;padding:2px 8px;border-radius:4px;border:1px solid var(--background-modifier-border);background:var(--background-primary);color:var(--text-normal);width:160px;';
+    searchInput.addEventListener('input', () => {
+      this.searchQuery = searchInput.value;
+      this.candPage = 0;
+      this.render();
+    });
+
     // ── 후보 그리드 ───────────────────────────────────────────
-    if (ranked.length === 0) {
+    if (allRanked.length === 0) {
       scrollArea.createEl('div', {
         text: '후보 이미지 없음',
+        attr: { style: 'color:var(--text-muted);font-size:0.85em;text-align:center;padding:24px 0;' },
+      });
+    } else if (ranked.length === 0) {
+      scrollArea.createEl('div', {
+        text: `검색 결과 없음 (전체 ${allRanked.length}개)`,
         attr: { style: 'color:var(--text-muted);font-size:0.85em;text-align:center;padding:24px 0;' },
       });
     } else {
@@ -221,19 +230,17 @@ export class BrokenLinkRepairModal extends Modal {
       const pageCands = ranked.slice(this.candPage * CAND_PAGE_SIZE, (this.candPage + 1) * CAND_PAGE_SIZE);
 
       scrollArea.createEl('div', {
-        text: `후보 이미지 (${ranked.length}개)`,
+        text: `후보 이미지 (${ranked.length}개${this.searchQuery ? ` / 전체 ${allRanked.length}개` : ''})`,
         attr: { style: 'font-size:0.82em;color:var(--text-muted);margin-bottom:6px;' },
       });
 
       const grid = scrollArea.createDiv({
         attr: { style: `display:grid;grid-template-columns:repeat(${COLS},1fr);gap:8px;margin-bottom:8px;` },
       });
-      for (let i = 0; i < pageCands.length; i++) {
-        const isTopRanked = this.candPage === 0 && i === 0;
-        this.renderCandCard(grid, pageCands[i], selected, key, isTopRanked);
+      for (const cand of pageCands) {
+        this.renderCandCard(grid, cand, selected, key);
       }
 
-      // 후보 페이지네이션
       if (totalCandPages > 1) {
         const candNav = scrollArea.createDiv({
           attr: { style: 'display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:8px;' },
@@ -264,6 +271,7 @@ export class BrokenLinkRepairModal extends Modal {
     prevBtn.addEventListener('click', () => {
       this.linkIdx--;
       this.candPage = 0;
+      this.searchQuery = '';
       this.loadAndRender(this.links[this.linkIdx].mdFile);
     });
 
@@ -271,24 +279,38 @@ export class BrokenLinkRepairModal extends Modal {
     skipBtn.style.cssText = 'padding:4px 12px;cursor:pointer;font-size:0.85em;';
     skipBtn.addEventListener('click', () => {
       this.repairs.set(key, null);
-      if (this.linkIdx < this.links.length - 1) {
-        this.linkIdx++;
-        this.candPage = 0;
-        this.loadAndRender(this.links[this.linkIdx].mdFile);
-      } else {
-        this.render();
+      this.goNext();
+    });
+
+    const deleteLinkBtn = nav.createEl('button', { text: '링크 삭제' });
+    deleteLinkBtn.style.cssText = 'padding:4px 12px;cursor:pointer;font-size:0.85em;color:var(--color-red);';
+    deleteLinkBtn.addEventListener('click', () => {
+      const current = this.noteEdits.get(link.mdFile.path) ?? '';
+      const lines = current.split('\n');
+      const lineIdx = lines.findIndex(l => l.includes(link.original));
+      if (lineIdx >= 0) {
+        const trimmed = lines[lineIdx].replace(link.original, '').trim();
+        if (trimmed === '') lines.splice(lineIdx, 1);
+        else lines[lineIdx] = lines[lineIdx].replace(link.original, '');
+        this.noteEdits.set(link.mdFile.path, lines.join('\n'));
       }
+      this.repairs.set(key, null);
+      this.goNext();
     });
 
     nav.createDiv({ attr: { style: 'flex:1;' } });
 
-    const n = this.assignedCount;
-    const applyBtn = nav.createEl('button', {
-      text: n > 0 ? `${n}개 링크 복구 적용` : '복구 적용',
-    });
-    applyBtn.disabled = n === 0;
+    const rc = this.repairCount;
+    const ec = this.editCount;
+    const total = rc + ec;
+    const applyLabel = total === 0 ? '적용'
+      : rc > 0 && ec > 0 ? `복구 ${rc}개 · 편집 저장 적용`
+      : rc > 0 ? `${rc}개 링크 복구 적용`
+      : `편집 저장 적용`;
+    const applyBtn = nav.createEl('button', { text: applyLabel });
+    applyBtn.disabled = total === 0;
     applyBtn.style.cssText = `padding:4px 14px;cursor:pointer;font-size:0.9em;${
-      n > 0 ? 'background:var(--interactive-accent);color:var(--text-on-accent);border:none;border-radius:4px;' : ''
+      total > 0 ? 'background:var(--interactive-accent);color:var(--text-on-accent);border:none;border-radius:4px;' : ''
     }`;
     applyBtn.addEventListener('click', () => this.applyAll());
 
@@ -298,18 +320,29 @@ export class BrokenLinkRepairModal extends Modal {
     nextBtn.addEventListener('click', () => {
       this.linkIdx++;
       this.candPage = 0;
+      this.searchQuery = '';
       this.loadAndRender(this.links[this.linkIdx].mdFile);
     });
   }
 
-  private renderCandCard(container: HTMLElement, file: TFile, selected: TFile | null, key: string, isTopRanked = false): void {
+  private goNext(): void {
+    if (this.linkIdx < this.links.length - 1) {
+      this.linkIdx++;
+      this.candPage = 0;
+      this.searchQuery = '';
+      this.loadAndRender(this.links[this.linkIdx].mdFile);
+    } else {
+      this.render();
+    }
+  }
+
+  private renderCandCard(container: HTMLElement, file: TFile, selected: TFile | null, key: string): void {
     const isSelected = selected?.path === file.path;
 
     const card = container.createDiv();
     card.style.cssText = `
       position:relative;border-radius:8px;overflow:hidden;cursor:pointer;
-      border:2px solid ${isSelected ? 'var(--color-accent)' : isTopRanked ? 'var(--color-accent)' : 'transparent'};
-      ${!isSelected && isTopRanked ? 'border-style:dashed;' : ''}
+      border:2px solid ${isSelected ? 'var(--color-accent)' : 'transparent'};
       background:var(--background-secondary);transition:border-color 0.15s;
     `;
 
@@ -348,22 +381,11 @@ export class BrokenLinkRepairModal extends Modal {
     imgWrap.addEventListener('mouseleave', () => { zoomBtn.style.opacity = '0'; });
     zoomBtn.addEventListener('click', (e) => { e.stopPropagation(); this.showZoom(file); });
 
-    // 파일명 + 추천 뱃지
-    const nameRow = card.createDiv({
-      attr: { style: 'display:flex;align-items:center;gap:4px;padding:5px 7px;' },
-    });
-    nameRow.createDiv({
+    card.createDiv({
       text: file.name,
-      attr: { style: 'font-size:0.78em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-muted);flex:1;min-width:0;' },
+      attr: { style: 'padding:5px 7px;font-size:0.78em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-muted);' },
     });
-    if (isTopRanked && !isSelected) {
-      nameRow.createEl('span', {
-        text: '추천',
-        attr: { style: 'flex-shrink:0;font-size:0.7em;padding:1px 5px;border-radius:3px;background:var(--color-accent);color:var(--text-on-accent);opacity:0.7;' },
-      });
-    }
 
-    // 클릭 → 선택
     card.addEventListener('click', () => {
       this.repairs.set(key, file);
       this.render();
@@ -394,29 +416,33 @@ export class BrokenLinkRepairModal extends Modal {
 
     const generator = new AltTextGenerator(this.app, this.settings);
 
-    const byNote = new Map<string, { link: BrokenLink; replacement: TFile; altText: string | null }[]>();
+    // TFile 복구: noteEdits 위에 적용
     for (const link of this.links) {
       const replacement = this.repairs.get(this.key(link));
-      if (!replacement) { skipped++; continue; }
-      // 교체 이미지의 기존 alt text 조회. 없으면 null (alt 없이 링크 생성)
+      if (!(replacement instanceof TFile)) { skipped++; continue; }
+      const base = this.noteEdits.get(link.mdFile.path) ?? await this.app.vault.read(link.mdFile);
       const altText = await generator.getExistingAltText(replacement);
-      const arr = byNote.get(link.mdFile.path) ?? [];
-      arr.push({ link, replacement, altText });
-      byNote.set(link.mdFile.path, arr);
+      const newLink = `![[${replacement.name}${altText ? `|${altText}` : ''}]]`;
+      this.noteEdits.set(link.mdFile.path, base.split(link.original).join(newLink));
+      fixed++;
     }
 
-    for (const [, items] of byNote) {
-      const mdFile = items[0].link.mdFile;
-      let content = await this.app.vault.read(mdFile);
-      for (const { link, replacement, altText } of items) {
-        const newLink = `![[${replacement.name}${altText ? `|${altText}` : ''}]]`;
-        content = content.split(link.original).join(newLink);
-        fixed++;
+    // noteEdits에 있는 모든 노트 저장 (링크 삭제 + 수동 편집 + 복구 포함)
+    for (const [notePath, content] of this.noteEdits) {
+      const mdFile = this.app.vault.getAbstractFileByPath(notePath);
+      if (mdFile instanceof TFile) {
+        await this.app.vault.modify(mdFile, content);
       }
-      await this.app.vault.modify(mdFile, content);
     }
 
-    new Notice(`✓ ${fixed}개 링크 복구 완료${skipped > 0 ? ` / ${skipped}개 건너뜀` : ''}`);
+    const parts = [];
+    if (fixed > 0) parts.push(`${fixed}개 복구`);
+    const editedNotes = this.noteEdits.size;
+    if (editedNotes > 0 && fixed === 0) parts.push(`${editedNotes}개 노트 편집 저장`);
+    else if (editedNotes > fixed) parts.push(`편집 저장`);
+    if (skipped > 0) parts.push(`${skipped}개 건너뜀`);
+
+    new Notice(`✓ ${parts.join(' / ')}`);
     this.close();
   }
 
