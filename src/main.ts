@@ -23,6 +23,7 @@ import { ImageLocalizer } from './ImageLocalizer';
 import { AltTextGenerator } from './AltTextGenerator';
 import { AltTextHistoryModal } from './AltTextHistoryModal';
 import { FileNameNormalizer } from './FileNameNormalizer';
+import { OrphanedImageModal } from './OrphanedImageModal';
 
 interface ConversionResult {
   originalSize: number;
@@ -109,6 +110,12 @@ export default class ImageManagerPlugin extends Plugin {
       id: 'alt-text-history',
       name: 'Alt text 생성 히스토리',
       callback: () => this.openAltTextHistory(),
+    });
+
+    this.addCommand({
+      id: 'find-orphaned-images',
+      name: '고아 이미지 탐지 및 삭제',
+      callback: () => this.findOrphanedImages(),
     });
 
     this.addSettingTab(new ImageManagerSettingTab(this.app, this));
@@ -480,6 +487,21 @@ export default class ImageManagerPlugin extends Plugin {
       this.settings.altTextModel
     );
     this.settings.altTextStatsUpdatedAt = new Date().toISOString();
+  }
+
+  private findOrphanedImages(): void {
+    const linkedPaths = new Set<string>();
+    for (const links of Object.values(this.app.metadataCache.resolvedLinks)) {
+      for (const path of Object.keys(links)) {
+        linkedPaths.add(path);
+      }
+    }
+
+    const orphaned = this.getImageFiles(ALL_IMAGE_EXTENSIONS).filter(
+      (f) => !linkedPaths.has(f.path)
+    );
+
+    new OrphanedImageModal(this.app, orphaned).open();
   }
 
   private openAltTextHistory(): void {
