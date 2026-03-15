@@ -3,6 +3,7 @@ export interface ModelConfig {
   inputPricePerM: number;   // $/1M input tokens
   cachedPricePerM: number;  // $/1M cached input tokens
   outputPricePerM: number;  // $/1M output tokens
+  isReasoning?: boolean;    // 내부 reasoning 토큰 소비 모델 여부
   tokenMethod: 'patch' | 'tile';
   // patch-based (gpt-5-nano, gpt-5-mini, gpt-4.1-nano, gpt-4.1-mini)
   patchBudget?: number;
@@ -27,6 +28,7 @@ export const MODEL_CONFIGS: Record<KnownModelId, ModelConfig> = {
     inputPricePerM: 0.05,
     cachedPricePerM: 0.01,
     outputPricePerM: 0.40,
+    isReasoning: true,
     tokenMethod: 'patch',
     patchBudget: 1536,
     patchMultiplier: 2.46,
@@ -36,6 +38,7 @@ export const MODEL_CONFIGS: Record<KnownModelId, ModelConfig> = {
     inputPricePerM: 0.25,
     cachedPricePerM: 0.03,
     outputPricePerM: 2.00,
+    isReasoning: true,
     tokenMethod: 'patch',
     patchBudget: 1536,
     patchMultiplier: 1.62,
@@ -69,8 +72,9 @@ export const MODEL_CONFIGS: Record<KnownModelId, ModelConfig> = {
   },
 };
 
-export const EXCHANGE_RATE_KRW = 1500; // 환율 1,500원/$
-export const AVG_OUTPUT_TOKENS = 10;   // alt text 평균 출력 토큰
+export const EXCHANGE_RATE_KRW = 1500;          // 환율 1,500원/$
+export const AVG_OUTPUT_TOKENS = 20;            // 일반 모델 평균 출력 토큰 (한 문장 alt text)
+export const AVG_OUTPUT_TOKENS_REASONING = 400; // 추론 모델 평균 완료 토큰 (reasoning 포함)
 
 /**
  * 이미지 크기(maxDimension px 정사각형 기준)와 모델로 예상 입력 토큰 수 계산.
@@ -149,8 +153,10 @@ export function calculateCostWon(
   return input + output;
 }
 
-/** 이미지 1장당 예상 비용(원). 출력은 AVG_OUTPUT_TOKENS 가정. */
+/** 이미지 1장당 예상 비용(원). 추론 모델은 AVG_OUTPUT_TOKENS_REASONING 적용. */
 export function estimateCostPerImageWon(maxDimension: number, modelId: string): number {
-  const tokens = estimateImageTokens(maxDimension, modelId);
-  return calculateCostWon(tokens, AVG_OUTPUT_TOKENS, modelId);
+  const config = MODEL_CONFIGS[modelId as KnownModelId] ?? MODEL_CONFIGS['gpt-4o-mini'];
+  const inputTokens = estimateImageTokens(maxDimension, modelId);
+  const avgOut = config.isReasoning ? AVG_OUTPUT_TOKENS_REASONING : AVG_OUTPUT_TOKENS;
+  return calculateCostWon(inputTokens, avgOut, modelId);
 }

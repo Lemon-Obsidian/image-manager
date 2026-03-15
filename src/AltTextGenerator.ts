@@ -26,7 +26,8 @@ export class AltTextGenerator {
     if (!this.settings.altTextEnabled || !this.settings.openaiApiKey) return null;
 
     const arrayBuffer = await this.app.vault.readBinary(file);
-    const result = await this.callOpenAIWithRetry(arrayBuffer, file.extension);
+    const context = await this.extractContext(file);
+    const result = await this.callOpenAIWithRetry(arrayBuffer, file.extension, context);
     const { text: altText } = result;
 
     if (!altText) {
@@ -131,7 +132,8 @@ export class AltTextGenerator {
 
   private async callOpenAIWithRetry(
     arrayBuffer: ArrayBuffer,
-    ext: string
+    ext: string,
+    context?: string
   ): Promise<AltTextResult> {
     let lastError: unknown;
 
@@ -143,7 +145,7 @@ export class AltTextGenerator {
       }
 
       try {
-        return await this.callOpenAI(arrayBuffer, ext);
+        return await this.callOpenAI(arrayBuffer, ext, context);
       } catch (e: any) {
         lastError = e;
         // 429 레이트 리밋이면 재시도, 그 외 에러는 즉시 throw
@@ -156,7 +158,11 @@ export class AltTextGenerator {
     throw lastError ?? new Error('최대 재시도 횟수 초과');
   }
 
-  private async callOpenAI(arrayBuffer: ArrayBuffer, ext: string): Promise<AltTextResult> {
+  private async callOpenAI(
+    arrayBuffer: ArrayBuffer,
+    ext: string,
+    context?: string
+  ): Promise<AltTextResult> {
     const imageData = await getImageDataFromFile(arrayBuffer, ext);
     const resized = resizeImageData(imageData, this.settings.altTextMaxDimension);
 
@@ -166,6 +172,14 @@ export class AltTextGenerator {
     const ctx = canvas.getContext('2d')!;
     ctx.putImageData(resized, 0, 0);
     const dataURL = canvas.toDataURL('image/png');
+
+    const promptText = this.settings.altTextPrompt.replace('{language}', this.settings.altTextLanguage);
+    const userContent: object[] = [{ type: 'image_url', image_url: { url: dataURL } }];
+    if (context) {
+      userContent.push({ type: 'text', text: `[노트 문맥]\n${context}\n\n[요청]\n${promptText}` });
+    } else {
+      userContent.push({ type: 'text', text: promptText });
+    }
 
     const response = await requestUrl({
       url: 'https://api.openai.com/v1/chat/completions',
@@ -177,18 +191,7 @@ export class AltTextGenerator {
       },
       body: JSON.stringify({
         model: this.settings.altTextModel,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: dataURL } },
-              {
-                type: 'text',
-                text: `이 이미지에 대한 간결한 alt text를 ${this.settings.altTextLanguage}로 작성해주세요. 이미지를 설명하는 짧은 문장 하나로만 답변하세요.`,
-              },
-            ],
-          },
-        ],
+        messages: [{ role: 'user', content: userContent }],
         max_completion_tokens: 1000,
       }),
     });
@@ -223,6 +226,30 @@ export class AltTextGenerator {
       }
     }
     return result;
+  }
+
+  /** 첫 번째 참조 마크다운 파일에서 이미지 위아래 N줄을 문자열로 반환. 0이면 undefined. */
+  private async extractContext(imageFile: TFile): Promise<string | undefined> {
+    const lines = this.settings.altTextContextLines;
+    if (!lines || lines <= 0) return undefined;
+
+    const mdFiles = this.findReferencingMarkdownFiles(imageFile);
+    if (mdFiles.length === 0) return undefined;
+
+    const content = await this.app.vault.read(mdFiles[0]);
+    const allLines = content.split('\n');
+
+    // 이미지 링크가 있는 줄 찾기
+    const pattern = new RegExp(
+      imageFile.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '|' +
+      imageFile.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    );
+    const idx = allLines.findIndex((l) => pattern.test(l));
+    if (idx === -1) return undefined;
+
+    const start = Math.max(0, idx - lines);
+    const end = Math.min(allLines.length - 1, idx + lines);
+    return allLines.slice(start, end + 1).join('\n');
   }
 
   private updateAltTextInContent(

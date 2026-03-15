@@ -697,13 +697,42 @@ class ImageManagerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('언어')
-      .setDesc('생성할 alt text의 언어')
+      .setDesc('프롬프트의 {language} 자리에 치환됩니다.')
       .addText((text) =>
         text
           .setPlaceholder('한국어')
           .setValue(this.plugin.settings.altTextLanguage)
           .onChange(async (value) => {
             this.plugin.settings.altTextLanguage = value.trim() || '한국어';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('프롬프트')
+      .setDesc('{language}는 위 언어 설정으로 치환됩니다.')
+      .addTextArea((text) => {
+        text
+          .setPlaceholder('이 이미지에 대한 간결한 alt text를 {language}로 작성해주세요...')
+          .setValue(this.plugin.settings.altTextPrompt)
+          .onChange(async (value) => {
+            this.plugin.settings.altTextPrompt = value.trim() || DEFAULT_SETTINGS.altTextPrompt;
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.rows = 3;
+        text.inputEl.style.width = '100%';
+      });
+
+    new Setting(containerEl)
+      .setName('노트 문맥 줄 수')
+      .setDesc('이미지 위아래 N줄을 함께 전송합니다. 0이면 비활성.')
+      .addSlider((slider) =>
+        slider
+          .setLimits(0, 20, 1)
+          .setValue(this.plugin.settings.altTextContextLines)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.altTextContextLines = value;
             await this.plugin.saveSettings();
           })
       );
