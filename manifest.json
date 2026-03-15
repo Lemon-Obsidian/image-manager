@@ -6,5 +6,5 @@
   "description": "Obsidian용 이미지 관리 플러그인",
   "author": "lemon",
   "authorUrl": "https://github.com/Lemon-Obsidian/image-manager",
-  "isDesktopOnly": false
+  "isDesktopOnly": true
 }
