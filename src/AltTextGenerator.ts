@@ -239,7 +239,7 @@ export class AltTextGenerator {
   }
 
   /** 참조 마크다운 파일 중 하나라도 이미 non-layout alt text가 있으면 true */
-  private async hasExistingAltText(imageFile: TFile): Promise<boolean> {
+  async hasExistingAltText(imageFile: TFile): Promise<boolean> {
     const escapedPath = imageFile.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const escapedName = imageFile.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // |뒤에 값이 있고, 레이아웃 수정자(숫자, center 등)가 아닌 경우

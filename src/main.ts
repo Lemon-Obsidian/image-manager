@@ -346,15 +346,27 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const files = this.getImageFiles(ALL_IMAGE_EXTENSIONS);
-    if (files.length === 0) {
+    const allFiles = this.getImageFiles(ALL_IMAGE_EXTENSIONS);
+    if (allFiles.length === 0) {
       new Notice('이미지 파일이 없습니다.');
+      return;
+    }
+
+    const generator = new AltTextGenerator(this.app, this.settings);
+
+    // overwrite 비활성화 시 이미 alt text가 있는 파일은 큐에서 제외
+    const files = this.settings.altTextOverwrite
+      ? allFiles
+      : (await Promise.all(allFiles.map(async f => (await generator.hasExistingAltText(f)) ? null : f)))
+          .filter((f): f is TFile => f !== null);
+
+    if (files.length === 0) {
+      new Notice('처리할 이미지가 없습니다. (모두 alt text 존재)');
       return;
     }
 
     const token = new CancellationToken();
     const progress = new ProgressNotice('Alt text 생성 중', token);
-    const generator = new AltTextGenerator(this.app, this.settings);
 
     const { success, failed, skipped, cancelled, errors } =
       await generator.generateForAll(
@@ -407,13 +419,25 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
+    const generator = new AltTextGenerator(this.app, this.settings);
+
+    // overwrite 비활성화 시 이미 alt text가 있는 파일은 큐에서 제외
+    const filteredFiles = this.settings.altTextOverwrite
+      ? files
+      : (await Promise.all(files.map(async f => (await generator.hasExistingAltText(f)) ? null : f)))
+          .filter((f): f is TFile => f !== null);
+
+    if (filteredFiles.length === 0) {
+      new Notice('처리할 이미지가 없습니다. (모두 alt text 존재)');
+      return;
+    }
+
     const token = new CancellationToken();
     const progress = new ProgressNotice('Alt text 생성 중 (현재 노트)', token);
-    const generator = new AltTextGenerator(this.app, this.settings);
 
     const { success, failed, skipped, cancelled, errors } =
       await generator.generateForAll(
-        files,
+        filteredFiles,
         (current, total) => progress.update(current, total),
         token,
         async (pt, ct) => { this.accumulateUsage(pt, ct); await this.saveSettings(); }
