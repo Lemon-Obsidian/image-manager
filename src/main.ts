@@ -271,7 +271,7 @@ export default class ImageManagerPlugin extends Plugin {
     const progress = new ProgressNotice('외부 이미지 로컬화 중');
     const localizer = new ImageLocalizer(this.app, this.settings);
 
-    const { localized, failed } = await localizer.localizeAll((current, total) => {
+    const { localized, failed, errors } = await localizer.localizeAll((current, total) => {
       progress.update(current, total);
     });
 
@@ -280,6 +280,7 @@ export default class ImageManagerPlugin extends Plugin {
         ? `✓ 로컬화: ${localized}개 / ✗ 실패: ${failed}개`
         : `✓ ${localized}개 이미지를 로컬화했습니다.`
     );
+    this.showErrors(errors);
   }
 
   private async generateAltTextForActive(): Promise<void> {
@@ -326,7 +327,7 @@ export default class ImageManagerPlugin extends Plugin {
     const progress = new ProgressNotice('Alt text 생성 중');
     const generator = new AltTextGenerator(this.app, this.settings);
 
-    const { success, failed, skipped, totalPromptTokens, totalCompletionTokens } =
+    const { success, failed, skipped, totalPromptTokens, totalCompletionTokens, errors } =
       await generator.generateForAll(files, (current, total) => {
         progress.update(current, total);
       });
@@ -335,6 +336,7 @@ export default class ImageManagerPlugin extends Plugin {
     await this.saveSettings();
 
     progress.finish(`✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
+    this.showErrors(errors);
   }
 
   private async normalizeFileNames(): Promise<void> {
@@ -346,12 +348,13 @@ export default class ImageManagerPlugin extends Plugin {
 
     const progress = new ProgressNotice('파일명 정규화 중');
 
-    const { renamed, skipped, failed } = await this.normalizer.normalizeAll(
+    const { renamed, skipped, failed, errors } = await this.normalizer.normalizeAll(
       files,
       (current, total) => progress.update(current, total)
     );
 
     progress.finish(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
+    this.showErrors(errors);
   }
 
   private async generateAltTextForCurrentNote(): Promise<void> {
@@ -372,13 +375,14 @@ export default class ImageManagerPlugin extends Plugin {
     const progress = new ProgressNotice(`Alt text 생성 중 (현재 노트)`);
     const generator = new AltTextGenerator(this.app, this.settings);
 
-    const { success, failed, skipped, totalPromptTokens, totalCompletionTokens } =
+    const { success, failed, skipped, totalPromptTokens, totalCompletionTokens, errors } =
       await generator.generateForAll(files, (current, total) => progress.update(current, total));
 
     this.accumulateUsage(totalPromptTokens, totalCompletionTokens);
     await this.saveSettings();
 
     progress.finish(`✓ ${success}개 성공 / ${failed}개 실패 / ${skipped}개 건너뜀`);
+    this.showErrors(errors);
   }
 
   private async normalizeFileNamesForCurrentNote(): Promise<void> {
@@ -394,12 +398,21 @@ export default class ImageManagerPlugin extends Plugin {
 
     const progress = new ProgressNotice('파일명 정규화 중 (현재 노트)');
 
-    const { renamed, skipped, failed } = await this.normalizer.normalizeAll(
+    const { renamed, skipped, failed, errors } = await this.normalizer.normalizeAll(
       files,
       (current, total) => progress.update(current, total)
     );
 
     progress.finish(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
+    this.showErrors(errors);
+  }
+
+  private showErrors(errors: string[]): void {
+    if (errors.length === 0) return;
+    const MAX_SHOWN = 5;
+    const shown = errors.slice(0, MAX_SHOWN);
+    const extra = errors.length > MAX_SHOWN ? `\n…외 ${errors.length - MAX_SHOWN}개` : '';
+    new Notice(`⚠️ 실패 항목:\n${shown.join('\n')}${extra}`, 8000);
   }
 
   private getImageFiles(extensions = SUPPORTED_EXTENSIONS): TFile[] {
