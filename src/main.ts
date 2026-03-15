@@ -1,6 +1,7 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import { convertImage, getImageDataFromFile, imageDataToArrayBuffer, resizeImageData } from './ImageConverter';
 import {
+  ALL_IMAGE_EXTENSIONS,
   DEFAULT_SETTINGS,
   ImageManagerSettings,
   SUPPORTED_EXTENSIONS,
@@ -241,7 +242,7 @@ export default class ImageManagerPlugin extends Plugin {
   }
 
   private async detectDuplicates(): Promise<void> {
-    const files = this.getImageFiles();
+    const files = this.getImageFiles(ALL_IMAGE_EXTENSIONS);
 
     if (files.length === 0) {
       new Notice('이미지 파일이 없습니다.');
@@ -316,7 +317,7 @@ export default class ImageManagerPlugin extends Plugin {
       return;
     }
 
-    const files = this.getImageFiles();
+    const files = this.getImageFiles(ALL_IMAGE_EXTENSIONS);
     if (files.length === 0) {
       new Notice('이미지 파일이 없습니다.');
       return;
@@ -337,7 +338,7 @@ export default class ImageManagerPlugin extends Plugin {
   }
 
   private async normalizeFileNames(): Promise<void> {
-    const files = this.getImageFiles();
+    const files = this.getImageFiles(ALL_IMAGE_EXTENSIONS);
     if (files.length === 0) {
       new Notice('이미지 파일이 없습니다.');
       return;
@@ -401,16 +402,16 @@ export default class ImageManagerPlugin extends Plugin {
     progress.finish(`✓ 이름 변경: ${renamed}개 / 건너뜀: ${skipped}개 / 실패: ${failed}개`);
   }
 
-  private getImageFiles(): TFile[] {
+  private getImageFiles(extensions = SUPPORTED_EXTENSIONS): TFile[] {
     return this.app.vault
       .getFiles()
       .filter(
         (f) =>
-          SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase()) && !this.isExcluded(f.path)
+          extensions.includes(f.extension.toLowerCase()) && !this.isExcluded(f.path)
       );
   }
 
-  /** 현재 열린 마크다운 노트에서 참조된 이미지 파일 목록 */
+  /** 현재 열린 마크다운 노트에서 참조된 이미지 파일 목록 (webp/avif 포함) */
   private getImagesInCurrentNote(): TFile[] | null {
     const activeFile = this.app.workspace.getActiveFile();
     if (!activeFile || activeFile.extension !== 'md') return null;
@@ -421,7 +422,7 @@ export default class ImageManagerPlugin extends Plugin {
       .filter(
         (f): f is TFile =>
           f instanceof TFile &&
-          SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase()) &&
+          ALL_IMAGE_EXTENSIONS.includes(f.extension.toLowerCase()) &&
           !this.isExcluded(f.path)
       );
   }
@@ -710,7 +711,7 @@ class ImageManagerSettingTab extends PluginSettingTab {
     // ── 모델별 예상 비용 비교표 ────────────────────────────────────
     const imageCount = this.plugin.app.vault
       .getFiles()
-      .filter((f) => SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase())).length;
+      .filter((f) => ALL_IMAGE_EXTENSIONS.includes(f.extension.toLowerCase())).length;
 
     const estBox = this.createInfoBox(containerEl);
     estBox.createEl('div', {

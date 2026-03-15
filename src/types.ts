@@ -50,6 +50,8 @@ export const DEFAULT_SETTINGS: ImageManagerSettings = {
   altTextStatsUpdatedAt: '',
 };
 
-// gif: animated 제외, svg: vector 제외
-// webp/avif: 이미 변환된 포맷이지만 다른 포맷으로 재변환 허용
+// 포맷 변환 대상 (gif/svg/webp/avif 제외)
 export const SUPPORTED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heic', 'heif'];
+
+// alt text 생성 / 파일명 정규화 / 중복 탐지 대상 (변환 결과물 webp/avif 포함)
+export const ALL_IMAGE_EXTENSIONS = [...SUPPORTED_EXTENSIONS, 'webp', 'avif'];
