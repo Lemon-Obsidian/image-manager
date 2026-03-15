@@ -1,6 +1,6 @@
 import { App, TFile, requestUrl } from 'obsidian';
 import { getImageDataFromFile, resizeImageData } from './ImageConverter';
-import { ImageManagerSettings } from './types';
+import { AltTextHistoryRecord, ImageManagerSettings } from './types';
 import { isLayoutModifier, sleep } from './utils';
 
 // 요청 사이 기본 딜레이 (ms)
@@ -28,6 +28,11 @@ export class AltTextGenerator {
     const result = await this.callOpenAIWithRetry(arrayBuffer, file.extension);
     const { text: altText } = result;
 
+    if (!altText) {
+      console.warn(`AltTextGenerator: 빈 응답 (${file.name})`);
+      return result;
+    }
+
     const mdFiles = this.findReferencingMarkdownFiles(file);
     for (const mdFile of mdFiles) {
       const content = await this.app.vault.read(mdFile);
@@ -35,6 +40,20 @@ export class AltTextGenerator {
       if (updated !== content) {
         await this.app.vault.modify(mdFile, updated);
       }
+    }
+
+    // 히스토리 기록 (최대 500개)
+    const record: AltTextHistoryRecord = {
+      fileName: file.name,
+      altText,
+      model: this.settings.altTextModel,
+      timestamp: new Date().toISOString(),
+      promptTokens: result.promptTokens,
+      completionTokens: result.completionTokens,
+    };
+    this.settings.altTextHistory.unshift(record);
+    if (this.settings.altTextHistory.length > 500) {
+      this.settings.altTextHistory.length = 500;
     }
 
     return result;

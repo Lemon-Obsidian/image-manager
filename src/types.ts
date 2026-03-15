@@ -25,6 +25,17 @@ export interface ImageManagerSettings {
   altTextTotalCompletionTokens: number;
   altTextTotalCostWon: number;    // 호출 시점 모델 단가로 계산한 누적 비용(원)
   altTextStatsUpdatedAt: string;  // ISO 날짜 문자열
+  // Alt Text 히스토리
+  altTextHistory: AltTextHistoryRecord[];
+}
+
+export interface AltTextHistoryRecord {
+  fileName: string;
+  altText: string;
+  model: string;
+  timestamp: string;    // ISO 날짜 문자열
+  promptTokens: number;
+  completionTokens: number;
 }
 
 export const DEFAULT_SETTINGS: ImageManagerSettings = {
@@ -48,6 +59,7 @@ export const DEFAULT_SETTINGS: ImageManagerSettings = {
   altTextTotalCompletionTokens: 0,
   altTextTotalCostWon: 0,
   altTextStatsUpdatedAt: '',
+  altTextHistory: [],
 };
 
 // 포맷 변환 대상 (gif/svg/webp/avif 제외)

@@ -21,6 +21,7 @@ import { DuplicateModal } from './DuplicateModal';
 import { ConversionRecord, ReportModal } from './ReportModal';
 import { ImageLocalizer } from './ImageLocalizer';
 import { AltTextGenerator } from './AltTextGenerator';
+import { AltTextHistoryModal } from './AltTextHistoryModal';
 import { FileNameNormalizer } from './FileNameNormalizer';
 
 interface ConversionResult {
@@ -102,6 +103,12 @@ export default class ImageManagerPlugin extends Plugin {
       id: 'normalize-filenames-current-note',
       name: '현재 노트 이미지 파일명 정규화',
       callback: () => this.normalizeFileNamesForCurrentNote(),
+    });
+
+    this.addCommand({
+      id: 'alt-text-history',
+      name: 'Alt text 생성 히스토리',
+      callback: () => this.openAltTextHistory(),
     });
 
     this.addSettingTab(new ImageManagerSettingTab(this.app, this));
@@ -453,8 +460,18 @@ export default class ImageManagerPlugin extends Plugin {
     this.settings.altTextStatsUpdatedAt = new Date().toISOString();
   }
 
+  private openAltTextHistory(): void {
+    new AltTextHistoryModal(this.app, this.settings.altTextHistory ?? [], async () => {
+      this.settings.altTextHistory = [];
+      await this.saveSettings();
+    }).open();
+  }
+
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    if (!Array.isArray(this.settings.altTextHistory)) {
+      this.settings.altTextHistory = [];
+    }
   }
 
   async saveSettings() {
