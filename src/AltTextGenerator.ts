@@ -1,7 +1,7 @@
 import { App, TFile, requestUrl } from 'obsidian';
 import { getImageDataFromFile, resizeImageData } from './ImageConverter';
 import { ImageManagerSettings } from './types';
-import { sleep } from './utils';
+import { isLayoutModifier, sleep } from './utils';
 
 // 요청 사이 기본 딜레이 (ms)
 const REQUEST_DELAY_MS = 1000;
@@ -49,6 +49,7 @@ export class AltTextGenerator {
     skipped: number;
     totalPromptTokens: number;
     totalCompletionTokens: number;
+    errors: string[];
   }> {
     const results = {
       success: 0,
@@ -56,6 +57,7 @@ export class AltTextGenerator {
       skipped: 0,
       totalPromptTokens: 0,
       totalCompletionTokens: 0,
+      errors: [] as string[],
     };
 
     for (let i = 0; i < files.length; i++) {
@@ -74,7 +76,9 @@ export class AltTextGenerator {
           results.totalCompletionTokens += result.completionTokens;
         }
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         console.error(`AltTextGenerator: 실패 (${files[i].name})`, e);
+        results.errors.push(`${files[i].name}: ${msg}`);
         results.failed++;
       }
     }
@@ -123,6 +127,7 @@ export class AltTextGenerator {
     const response = await requestUrl({
       url: 'https://api.openai.com/v1/chat/completions',
       method: 'POST',
+      throw: false,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.settings.openaiApiKey}`,
@@ -144,6 +149,13 @@ export class AltTextGenerator {
         max_tokens: 100,
       }),
     });
+
+    if (response.status >= 400) {
+      const errMsg = response.json?.error?.message ?? JSON.stringify(response.json);
+      const err = new Error(`OpenAI API 오류 (${response.status}): ${errMsg}`) as any;
+      err.status = response.status;
+      throw err;
+    }
 
     const json = response.json;
     return {
@@ -176,16 +188,18 @@ export class AltTextGenerator {
     const escapedPath = imagePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const escapedName = imageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // ![[path]] → ![[path|alt]], ![[path|old]] → ![[path|alt]]
-    content = content.replace(
-      new RegExp(`!\\[\\[${escapedPath}(\\|[^\\]]*)?\\]\\]`, 'g'),
-      `![[${imagePath}|${altText}]]`
-    );
-    // ![[name]] → ![[name|alt]], ![[name|old]] → ![[name|alt]]
-    content = content.replace(
-      new RegExp(`!\\[\\[${escapedName}(\\|[^\\]]*)?\\]\\]`, 'g'),
-      `![[${imageName}|${altText}]]`
-    );
+    const replaceWikilink = (ref: string, escaped: string) =>
+      content.replace(
+        new RegExp(`!\\[\\[${escaped}(\\|[^\\]]*)?\\]\\]`, 'g'),
+        (match, pipeGroup) => {
+          // |center, |left, |right, |200, |200x300 같은 레이아웃 수정자는 건드리지 않음
+          if (pipeGroup && isLayoutModifier(pipeGroup.slice(1))) return match;
+          return `![[${ref}|${altText}]]`;
+        }
+      );
+
+    content = replaceWikilink(imagePath, escapedPath);
+    content = replaceWikilink(imageName, escapedName);
 
     // ![old](path) → ![alt](path)
     content = content.replace(
