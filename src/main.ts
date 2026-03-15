@@ -6,6 +6,15 @@ import {
   SUPPORTED_EXTENSIONS,
 } from './types';
 import { formatReduction, ProgressNotice } from './utils';
+import {
+  AVG_OUTPUT_TOKENS,
+  EXCHANGE_RATE_KRW,
+  KNOWN_MODELS,
+  MODEL_CONFIGS,
+  calculateCostWon,
+  estimateCostPerImageWon,
+  estimateImageTokens,
+} from './models';
 import { DuplicateDetector } from './DuplicateDetector';
 import { DuplicateModal } from './DuplicateModal';
 import { ConversionRecord, ReportModal } from './ReportModal';
@@ -345,6 +354,12 @@ export default class ImageManagerPlugin extends Plugin {
     this.settings.altTextTotalRequests += 1;
     this.settings.altTextTotalPromptTokens += promptTokens;
     this.settings.altTextTotalCompletionTokens += completionTokens;
+    // 호출 시점의 모델 단가로 비용 계산 (모델 변경 시 이전 내역은 그대로 보존)
+    this.settings.altTextTotalCostWon += calculateCostWon(
+      promptTokens,
+      completionTokens,
+      this.settings.altTextModel
+    );
     this.settings.altTextStatsUpdatedAt = new Date().toISOString();
   }
 
@@ -529,16 +544,23 @@ class ImageManagerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('모델')
-      .setDesc('사용할 OpenAI 비전 모델')
-      .addText((text) =>
-        text
-          .setPlaceholder('gpt-4o-mini')
-          .setValue(this.plugin.settings.altTextModel)
+      .setDesc('사용할 OpenAI 비전 모델 (단가는 하단 비교표 참고)')
+      .addDropdown((drop) => {
+        for (const id of KNOWN_MODELS) {
+          drop.addOption(id, MODEL_CONFIGS[id].displayName);
+        }
+        drop
+          .setValue(
+            KNOWN_MODELS.includes(this.plugin.settings.altTextModel as any)
+              ? this.plugin.settings.altTextModel
+              : KNOWN_MODELS[0]
+          )
           .onChange(async (value) => {
-            this.plugin.settings.altTextModel = value.trim() || 'gpt-4o-mini';
+            this.plugin.settings.altTextModel = value;
             await this.plugin.saveSettings();
-          })
-      );
+            this.display(); // 비용 비교표 갱신
+          });
+      });
 
     new Setting(containerEl)
       .setName('이미지 전송 크기')
@@ -609,28 +631,67 @@ class ImageManagerSettingTab extends PluginSettingTab {
   private renderAltTextCostEstimate(containerEl: HTMLElement): void {
     const s = this.plugin.settings;
 
-    // ── 예측 비용 ──────────────────────────────────────────────────
+    // ── 모델별 예상 비용 비교표 ────────────────────────────────────
     const imageCount = this.plugin.app.vault
       .getFiles()
       .filter((f) => SUPPORTED_EXTENSIONS.includes(f.extension.toLowerCase())).length;
 
-    const tokensPerImage = s.altTextMaxDimension === 256 ? 85 : 170;
-    // gpt-4o-mini input $0.15/1M, 환율 1,500원/$
-    const wonPerImage = (tokensPerImage * 0.15 * 1500) / 1_000_000;
-
-    const estimateBox = this.createInfoBox(containerEl);
-    estimateBox.createEl('div', {
-      text: '📊 예상 비용 (볼트 전체 처리 시)',
-      attr: { style: 'font-weight: 600; margin-bottom: 6px;' },
+    const estBox = this.createInfoBox(containerEl);
+    estBox.createEl('div', {
+      text: `📊 모델별 예상 비용 (${s.altTextMaxDimension}px 기준 · 볼트 이미지 ${imageCount.toLocaleString()}개)`,
+      attr: { style: 'font-weight: 600; margin-bottom: 8px;' },
     });
-    this.renderRows(estimateBox, [
-      ['처리 대상 이미지', `${imageCount.toLocaleString()}개`],
-      ['이미지당 토큰', `약 ${tokensPerImage} 토큰`],
-      ['이미지당 비용', `약 ${wonPerImage.toFixed(4)}원`],
-      ['전체 예상 비용', `약 ${(imageCount * wonPerImage).toFixed(2)}원`],
-    ]);
-    estimateBox.createEl('div', {
-      text: `* gpt-4o-mini 기준, 환율 1,500원/$, 이미지 크기 ${s.altTextMaxDimension}px`,
+
+    const table = estBox.createEl('table');
+    table.style.cssText = 'width: 100%; border-collapse: collapse; font-size: 0.9em;';
+
+    // 헤더
+    const thead = table.createEl('thead');
+    const hRow = thead.createEl('tr');
+    for (const [text, align] of [
+      ['모델', 'left'],
+      ['이미지당 토큰', 'right'],
+      ['이미지당 비용', 'right'],
+      ['전체 예상', 'right'],
+    ] as [string, string][]) {
+      const th = hRow.createEl('th', { text });
+      th.style.cssText = `text-align: ${align}; padding: 4px 8px; border-bottom: 1px solid var(--background-modifier-border); color: var(--text-muted); font-weight: 500;`;
+    }
+
+    // 행
+    const tbody = table.createEl('tbody');
+    for (const modelId of KNOWN_MODELS) {
+      const config = MODEL_CONFIGS[modelId];
+      const tokens = estimateImageTokens(s.altTextMaxDimension, modelId);
+      const perImage = estimateCostPerImageWon(s.altTextMaxDimension, modelId);
+      const total = perImage * imageCount;
+      const isCurrent = s.altTextModel === modelId;
+
+      const row = tbody.createEl('tr');
+      if (isCurrent) {
+        row.style.cssText =
+          'background: var(--background-modifier-active-hover); font-weight: 600;';
+      }
+
+      // 모델명 셀
+      const nameCell = row.createEl('td', {
+        text: (isCurrent ? '▶ ' : '　') + config.displayName,
+      });
+      nameCell.style.cssText = 'padding: 5px 8px;';
+
+      // 수치 셀
+      for (const [text, isRight] of [
+        [`${tokens.toLocaleString()} 토큰`, true],
+        [`${perImage < 0.001 ? perImage.toFixed(6) : perImage.toFixed(4)}원`, true],
+        [`${total < 1 ? total.toFixed(4) : total.toFixed(2)}원`, true],
+      ] as [string, boolean][]) {
+        const td = row.createEl('td', { text });
+        td.style.cssText = `padding: 5px 8px; text-align: right;`;
+      }
+    }
+
+    estBox.createEl('div', {
+      text: `* 출력 약 ${AVG_OUTPUT_TOKENS}토큰 가정 · 환율 ${EXCHANGE_RATE_KRW}원/$ · 정사각형 이미지 기준`,
       attr: { style: 'margin-top: 6px; color: var(--text-faint); font-size: 0.85em;' },
     });
 
@@ -638,7 +699,10 @@ class ImageManagerSettingTab extends PluginSettingTab {
     const usageBox = this.createInfoBox(containerEl);
 
     const headerRow = usageBox.createDiv({
-      attr: { style: 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;' },
+      attr: {
+        style:
+          'display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;',
+      },
     });
     headerRow.createEl('div', { text: '💳 실사용 누적 비용', attr: { style: 'font-weight: 600;' } });
 
@@ -648,6 +712,7 @@ class ImageManagerSettingTab extends PluginSettingTab {
       this.plugin.settings.altTextTotalRequests = 0;
       this.plugin.settings.altTextTotalPromptTokens = 0;
       this.plugin.settings.altTextTotalCompletionTokens = 0;
+      this.plugin.settings.altTextTotalCostWon = 0;
       this.plugin.settings.altTextStatsUpdatedAt = '';
       await this.plugin.saveSettings();
       this.display();
@@ -659,11 +724,6 @@ class ImageManagerSettingTab extends PluginSettingTab {
         attr: { style: 'color: var(--text-muted);' },
       });
     } else {
-      // input $0.15/1M, output $0.60/1M, 환율 1,500원/$
-      const inputCostWon = (s.altTextTotalPromptTokens * 0.15 * 1500) / 1_000_000;
-      const outputCostWon = (s.altTextTotalCompletionTokens * 0.60 * 1500) / 1_000_000;
-      const totalCostWon = inputCostWon + outputCostWon;
-
       const updatedAt = s.altTextStatsUpdatedAt
         ? new Date(s.altTextStatsUpdatedAt).toLocaleString('ko-KR')
         : '–';
@@ -672,13 +732,11 @@ class ImageManagerSettingTab extends PluginSettingTab {
         ['누적 요청 수', `${s.altTextTotalRequests.toLocaleString()}건`],
         ['입력 토큰', `${s.altTextTotalPromptTokens.toLocaleString()}`],
         ['출력 토큰', `${s.altTextTotalCompletionTokens.toLocaleString()}`],
-        ['입력 비용', `약 ${inputCostWon.toFixed(4)}원`],
-        ['출력 비용', `약 ${outputCostWon.toFixed(4)}원`],
-        ['누적 총 비용', `약 ${totalCostWon.toFixed(4)}원`],
+        ['누적 총 비용', `약 ${s.altTextTotalCostWon.toFixed(6)}원`],
         ['마지막 업데이트', updatedAt],
       ]);
       usageBox.createEl('div', {
-        text: '* gpt-4o-mini 기준 (입력 $0.15/1M, 출력 $0.60/1M), 환율 1,500원/$',
+        text: '* 각 요청 시점의 선택 모델 단가로 누적 계산',
         attr: { style: 'margin-top: 6px; color: var(--text-faint); font-size: 0.85em;' },
       });
     }

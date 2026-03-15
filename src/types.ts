@@ -23,7 +23,8 @@ export interface ImageManagerSettings {
   altTextTotalRequests: number;
   altTextTotalPromptTokens: number;
   altTextTotalCompletionTokens: number;
-  altTextStatsUpdatedAt: string; // ISO 날짜 문자열
+  altTextTotalCostWon: number;    // 호출 시점 모델 단가로 계산한 누적 비용(원)
+  altTextStatsUpdatedAt: string;  // ISO 날짜 문자열
 }
 
 export const DEFAULT_SETTINGS: ImageManagerSettings = {
@@ -37,7 +38,7 @@ export const DEFAULT_SETTINGS: ImageManagerSettings = {
   localizeSavePath: 'Attachments',
   altTextEnabled: false,
   openaiApiKey: '',
-  altTextModel: 'gpt-4o-mini',
+  altTextModel: 'gpt-5-nano',
   altTextMaxDimension: 256,
   altTextLanguage: '한국어',
   renameEnabled: false,
@@ -45,6 +46,7 @@ export const DEFAULT_SETTINGS: ImageManagerSettings = {
   altTextTotalRequests: 0,
   altTextTotalPromptTokens: 0,
   altTextTotalCompletionTokens: 0,
+  altTextTotalCostWon: 0,
   altTextStatsUpdatedAt: '',
 };
 
