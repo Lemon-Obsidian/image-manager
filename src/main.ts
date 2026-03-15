@@ -684,6 +684,18 @@ class ImageManagerSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('생성 후 파일명 자동 변경')
+      .setDesc('Alt text를 기반으로 파일명을 자동 정규화합니다. (![[image|alt text]]로 링크도 함께 갱신)')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.altTextAutoRename)
+          .onChange(async (value) => {
+            this.plugin.settings.altTextAutoRename = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName('언어')
       .setDesc('생성할 alt text의 언어')
       .addText((text) =>

@@ -1,5 +1,6 @@
 import { App, TFile, requestUrl } from 'obsidian';
 import { getImageDataFromFile, resizeImageData } from './ImageConverter';
+import { FileNameNormalizer } from './FileNameNormalizer';
 import { AltTextHistoryRecord, ImageManagerSettings } from './types';
 import { sleep } from './utils';
 
@@ -33,6 +34,9 @@ export class AltTextGenerator {
       return result;
     }
 
+    const originalName = file.name;
+
+    // 1. 먼저 마크다운에 |alt text 반영
     const mdFiles = this.findReferencingMarkdownFiles(file);
     for (const mdFile of mdFiles) {
       const content = await this.app.vault.read(mdFile);
@@ -42,9 +46,29 @@ export class AltTextGenerator {
       }
     }
 
-    // 히스토리 기록 (최대 500개)
+    // 2. alt text 기반 파일명 자동 변경 (fileManager가 링크도 자동 업데이트)
+    if (this.settings.altTextAutoRename) {
+      const newBaseName = FileNameNormalizer.normalizeString(altText);
+      if (newBaseName && newBaseName !== file.basename) {
+        const dir = file.parent?.path ?? '';
+        const ext = file.extension;
+        let newPath = dir ? `${dir}/${newBaseName}.${ext}` : `${newBaseName}.${ext}`;
+        let counter = 1;
+        while (this.app.vault.getAbstractFileByPath(newPath) && counter < 100) {
+          const suffixed = `${newBaseName}-${counter}`;
+          newPath = dir ? `${dir}/${suffixed}.${ext}` : `${suffixed}.${ext}`;
+          counter++;
+        }
+        await this.app.fileManager.renameFile(file, newPath);
+      }
+    }
+
+    // 3. 히스토리 기록 (최대 500개, originalName 사용)
+    if (!Array.isArray(this.settings.altTextHistory)) {
+      this.settings.altTextHistory = [];
+    }
     const record: AltTextHistoryRecord = {
-      fileName: file.name,
+      fileName: originalName,
       altText,
       model: this.settings.altTextModel,
       timestamp: new Date().toISOString(),

@@ -25,6 +25,8 @@ export interface ImageManagerSettings {
   altTextTotalCompletionTokens: number;
   altTextTotalCostWon: number;    // 호출 시점 모델 단가로 계산한 누적 비용(원)
   altTextStatsUpdatedAt: string;  // ISO 날짜 문자열
+  // Alt Text 자동 파일명 변경 (생성된 alt text로 rename)
+  altTextAutoRename: boolean;
   // Alt Text 히스토리
   altTextHistory: AltTextHistoryRecord[];
 }
@@ -59,6 +61,7 @@ export const DEFAULT_SETTINGS: ImageManagerSettings = {
   altTextTotalCompletionTokens: 0,
   altTextTotalCostWon: 0,
   altTextStatsUpdatedAt: '',
+  altTextAutoRename: true,
   altTextHistory: [],
 };
 
