@@ -1,7 +1,7 @@
 import { App, TFile, requestUrl } from 'obsidian';
 import { getImageDataFromFile, resizeImageData } from './ImageConverter';
 import { AltTextHistoryRecord, ImageManagerSettings } from './types';
-import { isLayoutModifier, sleep } from './utils';
+import { sleep } from './utils';
 
 // 요청 사이 기본 딜레이 (ms)
 const REQUEST_DELAY_MS = 1000;
@@ -210,11 +210,7 @@ export class AltTextGenerator {
     const replaceWikilink = (ref: string, escaped: string) =>
       content.replace(
         new RegExp(`!\\[\\[${escaped}(\\|[^\\]]*)?\\]\\]`, 'g'),
-        (match, pipeGroup) => {
-          // |center, |left, |right, |200, |200x300 같은 레이아웃 수정자는 건드리지 않음
-          if (pipeGroup && isLayoutModifier(pipeGroup.slice(1))) return match;
-          return `![[${ref}|${altText}]]`;
-        }
+        () => `![[${ref}|${altText}]]`
       );
 
     content = replaceWikilink(imagePath, escapedPath);
