@@ -7,6 +7,13 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@jsquash/avif':
+        specifier: ^2.1.1
+        version: 2.1.1
+      heic2any:
+        specifier: ^0.0.4
+        version: 0.0.4
     devDependencies:
       '@types/node':
         specifier: ^16.11.6
@@ -167,6 +174,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@jsquash/avif@2.1.1':
+    resolution: {integrity: sha512-LMRxd0fMgfCLtobDh0/sFYJMMiRJTNYSEEWvRDKXlAeZ08t3gI5V+1thIT0XjXJ+SVG7Zug9B0XPyx0Ti5VRNA==}
+
   '@marijn/find-cluster-break@1.0.2':
     resolution: {integrity: sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g==}
 
@@ -194,6 +204,9 @@ packages:
     engines: {node: '>=12'}
     hasBin: true
 
+  heic2any@0.0.4:
+    resolution: {integrity: sha512-3lLnZiDELfabVH87htnRolZ2iehX9zwpRyGNz22GKXIu0fznlblf0/ftppXKNqS26dqFSeqfIBhAmAj/uSp0cA==}
+
   moment@2.29.4:
     resolution: {integrity: sha512-5LC9SOxjSc2HF6vO2CyuTDNivEdoz2IvyJJGj6X8DJ0eFyfszE0QiEd+iXmBvUP3WHxSjFH/vIsA0EN00cgr8w==}
 
@@ -216,6 +229,9 @@ packages:
 
   w3c-keyname@2.2.8:
     resolution: {integrity: sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ==}
+
+  wasm-feature-detect@1.8.0:
+    resolution: {integrity: sha512-zksaLKM2fVlnB5jQQDqKXXwYHLQUVH9es+5TOOHwGOVJOCeRBCiPjwSg+3tN2AdTCzjgli4jijCH290kXb/zWQ==}
 
 snapshots:
 
@@ -296,6 +312,10 @@ snapshots:
   '@esbuild/win32-x64@0.17.3':
     optional: true
 
+  '@jsquash/avif@2.1.1':
+    dependencies:
+      wasm-feature-detect: 1.8.0
+
   '@marijn/find-cluster-break@1.0.2': {}
 
   '@types/codemirror@5.60.8':
@@ -339,6 +359,8 @@ snapshots:
       '@esbuild/win32-ia32': 0.17.3
       '@esbuild/win32-x64': 0.17.3
 
+  heic2any@0.0.4: {}
+
   moment@2.29.4: {}
 
   obsidian@1.12.3(@codemirror/state@6.5.0)(@codemirror/view@6.38.6):
@@ -355,3 +377,5 @@ snapshots:
   typescript@4.7.4: {}
 
   w3c-keyname@2.2.8: {}
+
+  wasm-feature-detect@1.8.0: {}
